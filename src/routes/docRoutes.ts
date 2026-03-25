@@ -51,6 +51,47 @@ docRoutes.get("/status", requireAuth, async (req, res) => {
   });
 });
 
+// Public debug endpoint: для быстрого понимания,
+// почему backend на Vercel "не видит" документы.
+docRoutes.get("/status-public", async (_req, res) => {
+  const resolvedDocsRoot = path.resolve(config.docsRoot);
+  const resolvedVectorDb = path.resolve(config.vectorDbPath);
+
+  const countTxt = async (dir: string): Promise<number> => {
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      return entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".txt")).length;
+    } catch {
+      return 0;
+    }
+  };
+
+  const [ruCount, kzCount] = await Promise.all([
+    countTxt(path.join(resolvedDocsRoot, "ru")),
+    countTxt(path.join(resolvedDocsRoot, "kz")),
+  ]);
+
+  let vectorChunks = 0;
+  try {
+    const raw = await fs.readFile(resolvedVectorDb, "utf-8");
+    vectorChunks = (JSON.parse(raw) as unknown[]).length;
+  } catch {
+    vectorChunks = 0;
+  }
+
+  res.json({
+    ok: true,
+    cwd: process.cwd(),
+    docsRoot: config.docsRoot,
+    docsRootResolved: resolvedDocsRoot,
+    ruTxtFiles: ruCount,
+    kzTxtFiles: kzCount,
+    vectorDbPath: config.vectorDbPath,
+    vectorDbResolved: resolvedVectorDb,
+    vectorChunks,
+  });
+});
+
 docRoutes.post("/ingest", requireAuth, async (req, res) => {
   if (req.user?.role !== "official") {
     res.status(403).json({ error: "Only officials can run ingestion" });

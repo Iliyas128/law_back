@@ -40,11 +40,27 @@ docRoutes.get("/status", requireAuth, async (req, res) => {
   ]);
 
   let vectorChunks = 0;
+  let manifestFilesCount = 0;
+  let firstManifestFile: string | null = null;
   try {
     const raw = await fs.readFile(resolvedVectorDb, "utf-8");
     vectorChunks = (JSON.parse(raw) as unknown[]).length;
   } catch {
     vectorChunks = 0;
+  }
+
+  // If Vercel serverless FS doesn't include data/docs, remote fallback can still work
+  // via generated dist/docs-manifest.json.
+  try {
+    const manifestPath = path.join(process.cwd(), "dist", "docs-manifest.json");
+    const manifestRaw = await fs.readFile(manifestPath, "utf-8");
+    const manifest = JSON.parse(manifestRaw) as { files?: string[] };
+    const files = Array.isArray(manifest.files) ? manifest.files : [];
+    manifestFilesCount = files.length;
+    firstManifestFile = files[0] ?? null;
+  } catch {
+    manifestFilesCount = 0;
+    firstManifestFile = null;
   }
 
   res.json({
@@ -57,6 +73,8 @@ docRoutes.get("/status", requireAuth, async (req, res) => {
     vectorDbPath: config.vectorDbPath,
     vectorDbResolved: resolvedVectorDb,
     vectorChunks,
+    docsManifestFilesCount: manifestFilesCount,
+    docsManifestFirstFile: firstManifestFile,
   });
 });
 

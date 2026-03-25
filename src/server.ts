@@ -7,6 +7,21 @@ import { docRoutes } from "./routes/docRoutes.js";
 
 const app = express();
 
+// Жесткий preflight-обработчик: некоторые прокси/рендеры на Vercel возвращают 404/без CORS
+// на OPTIONS, поэтому браузер ломается. Здесь мы всегда отвечаем корректными CORS-заголовками.
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") {
+    const origin = req.headers.origin;
+    res.setHeader("Access-Control-Allow-Origin", origin ?? "*");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.status(204).end();
+    return;
+  }
+  next();
+});
+
 app.use(
   cors({
     // Vercel + браузерные preflight иногда ломают кастомную whitelist-логику.
@@ -18,8 +33,6 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
-// Явно отвечаем на preflight, чтобы `Authorization` корректно проходил.
-app.options("*", cors());
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/api/health", (_req, res) => {

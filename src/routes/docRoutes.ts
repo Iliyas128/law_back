@@ -124,6 +124,18 @@ docRoutes.get("/status-public", async (_req, res) => {
     findFirstTxtRecursive(kzDir),
   ]);
 
+  async function dirDebug(dir: string): Promise<{ exists: boolean; error: string | null }> {
+    try {
+      await fs.stat(dir);
+      return { exists: true, error: null };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      return { exists: false, error: msg };
+    }
+  }
+
+  const [ruDirDebug, kzDirDebug] = await Promise.all([dirDebug(ruDir), dirDebug(kzDir)]);
+
   let vectorChunks = 0;
   try {
     const raw = await fs.readFile(resolvedVectorDb, "utf-8");
@@ -143,6 +155,10 @@ docRoutes.get("/status-public", async (_req, res) => {
     kzDirEntries: kzEntries,
     firstRuTxt: firstRuTxt,
     firstKzTxt: firstKzTxt,
+    ruDirExists: ruDirDebug.exists,
+    kzDirExists: kzDirDebug.exists,
+    ruDirError: ruDirDebug.error,
+    kzDirError: kzDirDebug.error,
     vectorDbPath: config.vectorDbPath,
     vectorDbResolved: resolvedVectorDb,
     vectorChunks,

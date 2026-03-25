@@ -66,6 +66,34 @@ docRoutes.get("/status-public", async (_req, res) => {
   const resolvedDocsRoot = path.resolve(config.docsRoot);
   const resolvedVectorDb = path.resolve(config.vectorDbPath);
 
+  const listDirEntries = async (dir: string): Promise<string[]> => {
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      return entries.slice(0, 50).map((e) => (e.isDirectory() ? `[D]${e.name}` : e.name));
+    } catch {
+      return [];
+    }
+  };
+
+  const findFirstTxtRecursive = async (dir: string): Promise<string | null> => {
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isFile() && entry.name.toLowerCase().endsWith(".txt")) {
+          return fullPath;
+        }
+        if (entry.isDirectory()) {
+          const nested = await findFirstTxtRecursive(fullPath);
+          if (nested) return nested;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  };
+
   const countTxtRecursive = async (dir: string): Promise<number> => {
     try {
       const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -84,9 +112,16 @@ docRoutes.get("/status-public", async (_req, res) => {
     }
   };
 
-  const [ruCount, kzCount] = await Promise.all([
-    countTxtRecursive(path.join(resolvedDocsRoot, "ru")),
-    countTxtRecursive(path.join(resolvedDocsRoot, "kz")),
+  const ruDir = path.join(resolvedDocsRoot, "ru");
+  const kzDir = path.join(resolvedDocsRoot, "kz");
+
+  const [ruCount, kzCount, ruEntries, kzEntries, firstRuTxt, firstKzTxt] = await Promise.all([
+    countTxtRecursive(ruDir),
+    countTxtRecursive(kzDir),
+    listDirEntries(ruDir),
+    listDirEntries(kzDir),
+    findFirstTxtRecursive(ruDir),
+    findFirstTxtRecursive(kzDir),
   ]);
 
   let vectorChunks = 0;
@@ -104,6 +139,10 @@ docRoutes.get("/status-public", async (_req, res) => {
     docsRootResolved: resolvedDocsRoot,
     ruTxtFiles: ruCount,
     kzTxtFiles: kzCount,
+    ruDirEntries: ruEntries,
+    kzDirEntries: kzEntries,
+    firstRuTxt: firstRuTxt,
+    firstKzTxt: firstKzTxt,
     vectorDbPath: config.vectorDbPath,
     vectorDbResolved: resolvedVectorDb,
     vectorChunks,

@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { z } from "zod";
-import { requireAuth } from "../middleware/auth.js";
 import { VectorStore } from "../rag/vectorStore.js";
 import { config } from "../config.js";
 import { generateAnswer, rankHybrid } from "../rag/gemini.js";
@@ -9,25 +8,33 @@ import { loadRawChunks, rankRawLexical } from "../rag/rawSearch.js";
 
 const bodySchema = z.object({
   message: z.string().min(2),
-  mode: z.enum(["citizen", "official"]).optional(),
-  lang: z.enum(["ru", "kz"]).optional(),
+  mode: z
+    .preprocess((v) => (typeof v === "string" ? v.toLowerCase() : v), z.enum(["citizen", "official"]))
+    .optional(),
+  lang: z.preprocess((v) => (typeof v === "string" ? v.toLowerCase() : v), z.enum(["ru", "kz"])).optional(),
 });
 
 export const chatRoutes = Router();
 
-chatRoutes.post("/", requireAuth, async (req, res) => {
-  const parsed = bodySchema.safeParse(req.body);
+chatRoutes.post("/", async (req, res) => {
+  let body: unknown = req.body;
+  // Иногда в серверлесс окружениях тело может прийти как строка.
+  if (typeof body === "string") {
+    try {
+      body = JSON.parse(body);
+    } catch {
+      // оставляем как строку, zod даст понятную ошибку
+    }
+  }
+
+  const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid payload", details: parsed.error.flatten() });
     return;
   }
 
   const requestedMode = parsed.data.mode;
-  const role = req.user?.role ?? "citizen";
-  if (requestedMode === "official" && role !== "official") {
-    res.status(403).json({ error: "Citizen user cannot use official mode" });
-    return;
-  }
+  const role = requestedMode ?? "citizen";
 
   try {
     const store = new VectorStore(config.vectorDbPath);

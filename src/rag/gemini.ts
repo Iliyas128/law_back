@@ -115,7 +115,16 @@ export async function rankHybrid(
   chunks: RagChunk[],
   options: HybridRankOptions,
 ): Promise<RagChunk[]> {
-  const queryEmbedding = await embedText(query);
+  // Если Gemini embeddings недоступны (ключ/сервис), делаем чисто лексический поиск.
+  let queryEmbedding: number[] | null = null;
+  try {
+    queryEmbedding = await embedText(query);
+  } catch {
+    return chunks
+      .sort((a, b) => lexicalScore(query, b.content) - lexicalScore(query, a.content))
+      .slice(0, options.topK);
+  }
+
   const candidateCount = Math.max(options.topK, options.topK * options.candidateMultiplier);
 
   const scored = chunks.map((chunk) => {
@@ -175,7 +184,24 @@ export async function generateAnswer(
   contexts: RagChunk[],
 ): Promise<string> {
   if (!ai) {
-    throw new Error("GEMINI_API_KEY is not configured");
+    const first = contexts[0];
+    const excerpt = first?.content?.trim()?.slice(0, 1800) ?? "";
+    const law = first?.law ?? "Не найдено";
+    const article = first?.article ?? "-";
+    const header = role === "official" ? "Официальный стиль (выдержка):" : "Короткий ответ по найденной норме:";
+
+    return [
+      header,
+      "",
+      `Основание: ${law}, статья: ${article}`,
+      "",
+      excerpt ? `Выдержка из текста:` : "В контексте не удалось извлечь текст.",
+      excerpt ? excerpt : "",
+      "",
+      "Важно: это предварительный ответ на основе найденного текста. Для окончательной оценки обратитесь к юристу.",
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   const contextBlock = contexts

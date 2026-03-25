@@ -11,13 +11,9 @@ const bodySchema = z.object({
   mode: z
     .preprocess((v) => (typeof v === "string" ? v.toLowerCase() : v), z.enum(["citizen", "official"]))
     .optional(),
-  lang: z
-    .preprocess((v) => {
-      if (typeof v !== "string") return undefined;
-      const s = v.toLowerCase();
-      return s === "ru" || s === "kz" ? s : undefined;
-    }, z.enum(["ru", "kz"]))
-    .optional(),
+  // Не валидируем lang как строгий enum на сервере, чтобы деплой/окружение фронта
+  // не вызывало 400. Далее нормализуем вручную.
+  lang: z.preprocess((v) => (typeof v === "string" ? v.toLowerCase() : undefined), z.string().optional()).optional(),
 });
 
 export const chatRoutes = Router();
@@ -57,12 +53,15 @@ chatRoutes.post("/", async (req, res) => {
       return;
     }
 
-    const langFiltered = parsed.data.lang
-      ? searchableChunks.filter((chunk) => chunk.lang === parsed.data.lang)
+    const normalizedLang =
+      parsed.data.lang === "ru" || parsed.data.lang === "kz" ? parsed.data.lang : undefined;
+
+    const langFiltered = normalizedLang
+      ? searchableChunks.filter((chunk) => chunk.lang === normalizedLang)
       : searchableChunks;
     if (langFiltered.length === 0) {
       res.json({
-        answer: `Для языка ${parsed.data.lang} пока нет проиндексированных документов.`,
+        answer: `Для языка ${normalizedLang} пока нет проиндексированных документов.`,
         law: "Нет данных",
         article: "-",
         sources: [],

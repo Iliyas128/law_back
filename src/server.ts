@@ -45,7 +45,10 @@ app.use("/api/docs", docRoutes);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
-  res.status(500).json({ error: "Internal server error" });
+  res.status(500).json({
+    error: "Internal server error",
+    details: err instanceof Error ? err.message : String(err),
+  });
 });
 
 app.listen(config.port, () => {

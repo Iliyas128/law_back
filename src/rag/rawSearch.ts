@@ -40,6 +40,27 @@ async function readTxtFiles(dirPath: string): Promise<string[]> {
   return entries.filter((e) => e.isFile() && e.name.endsWith(".txt")).map((e) => e.name);
 }
 
+async function listTxtFilesRecursive(dirPath: string): Promise<string[]> {
+  const entries = await fs.readdir(dirPath, { withFileTypes: true });
+  const results: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      try {
+        const nested = await listTxtFilesRecursive(fullPath);
+        results.push(...nested);
+      } catch {
+        // ignore unreadable folders
+      }
+    } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".txt")) {
+      results.push(fullPath);
+    }
+  }
+
+  return results;
+}
+
 export async function loadRawChunks(docsRoot: string): Promise<RagChunk[]> {
   if (cachedChunks) return cachedChunks;
 
@@ -48,19 +69,18 @@ export async function loadRawChunks(docsRoot: string): Promise<RagChunk[]> {
     const langDir = path.join(docsRoot, lang);
     let files: string[] = [];
     try {
-      files = await readTxtFiles(langDir);
+      files = await listTxtFilesRecursive(langDir);
     } catch {
       continue;
     }
 
-    for (const file of files) {
-      const fullPath = path.join(langDir, file);
+    for (const fullPath of files) {
       const text = await fs.readFile(fullPath, "utf-8");
-      const meta = parseLawAndArticle(file);
+      const meta = parseLawAndArticle(path.basename(fullPath));
       const chunks = chunkDocument(text, { defaultArticle: meta.article });
       for (let i = 0; i < chunks.length; i += 1) {
         all.push({
-          id: `raw:${lang}:${file}:${i}`,
+          id: `raw:${lang}:${fullPath}:${i}`,
           content: chunks[i].content,
           embedding: [],
           law: meta.law,

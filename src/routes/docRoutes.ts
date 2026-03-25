@@ -16,18 +16,27 @@ docRoutes.get("/status", requireAuth, async (req, res) => {
   const resolvedDocsRoot = path.resolve(config.docsRoot);
   const resolvedVectorDb = path.resolve(config.vectorDbPath);
 
-  const countTxt = async (dir: string): Promise<number> => {
+  const countTxtRecursive = async (dir: string): Promise<number> => {
     try {
       const entries = await fs.readdir(dir, { withFileTypes: true });
-      return entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".txt")).length;
+      let count = 0;
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isFile() && entry.name.toLowerCase().endsWith(".txt")) {
+          count += 1;
+        } else if (entry.isDirectory()) {
+          count += await countTxtRecursive(fullPath);
+        }
+      }
+      return count;
     } catch {
       return 0;
     }
   };
 
   const [ruCount, kzCount] = await Promise.all([
-    countTxt(path.join(resolvedDocsRoot, "ru")),
-    countTxt(path.join(resolvedDocsRoot, "kz")),
+    countTxtRecursive(path.join(resolvedDocsRoot, "ru")),
+    countTxtRecursive(path.join(resolvedDocsRoot, "kz")),
   ]);
 
   let vectorChunks = 0;
@@ -57,18 +66,27 @@ docRoutes.get("/status-public", async (_req, res) => {
   const resolvedDocsRoot = path.resolve(config.docsRoot);
   const resolvedVectorDb = path.resolve(config.vectorDbPath);
 
-  const countTxt = async (dir: string): Promise<number> => {
+  const countTxtRecursive = async (dir: string): Promise<number> => {
     try {
       const entries = await fs.readdir(dir, { withFileTypes: true });
-      return entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".txt")).length;
+      let count = 0;
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isFile() && entry.name.toLowerCase().endsWith(".txt")) {
+          count += 1;
+        } else if (entry.isDirectory()) {
+          count += await countTxtRecursive(fullPath);
+        }
+      }
+      return count;
     } catch {
       return 0;
     }
   };
 
   const [ruCount, kzCount] = await Promise.all([
-    countTxt(path.join(resolvedDocsRoot, "ru")),
-    countTxt(path.join(resolvedDocsRoot, "kz")),
+    countTxtRecursive(path.join(resolvedDocsRoot, "ru")),
+    countTxtRecursive(path.join(resolvedDocsRoot, "kz")),
   ]);
 
   let vectorChunks = 0;

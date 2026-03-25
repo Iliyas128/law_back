@@ -21,6 +21,27 @@ async function readTextFiles(dirPath: string): Promise<string[]> {
   return entries.filter((e) => e.isFile() && e.name.endsWith(".txt")).map((e) => e.name);
 }
 
+async function listTxtFilesRecursive(dirPath: string): Promise<string[]> {
+  const entries = await fs.readdir(dirPath, { withFileTypes: true });
+  const results: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      try {
+        const nested = await listTxtFilesRecursive(fullPath);
+        results.push(...nested);
+      } catch {
+        // ignore
+      }
+    } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".txt")) {
+      results.push(fullPath);
+    }
+  }
+
+  return results;
+}
+
 export async function ingestAllDocuments(
   docsRoot: string,
   vectorDbPath: string,
@@ -34,7 +55,7 @@ export async function ingestAllDocuments(
     const langDir = path.join(docsRoot, lang);
     let files: string[] = [];
     try {
-      files = await readTextFiles(langDir);
+      files = await listTxtFilesRecursive(langDir);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         continue;
@@ -42,11 +63,10 @@ export async function ingestAllDocuments(
       throw err;
     }
 
-    for (const file of files) {
+    for (const fullPath of files) {
       fileCounter += 1;
-      const fullPath = path.join(langDir, file);
       const text = await fs.readFile(fullPath, "utf-8");
-      const { law, article } = parseLawAndArticle(file);
+      const { law, article } = parseLawAndArticle(path.basename(fullPath));
       const chunks = chunkDocument(text, { defaultArticle: article });
 
       for (let i = 0; i < chunks.length; i += 1) {
@@ -54,7 +74,7 @@ export async function ingestAllDocuments(
         try {
           const embedding = await embedText(content);
           allChunks.push({
-            id: `${lang}:${file}:${i}`,
+            id: `${lang}:${fullPath}:${i}`,
             content,
             embedding,
             law,
@@ -64,7 +84,7 @@ export async function ingestAllDocuments(
           });
         } catch (error) {
           skippedChunks += 1;
-          console.warn(`Skipping chunk ${lang}:${file}:${i}`, error);
+          console.warn(`Skipping chunk ${lang}:${fullPath}:${i}`, error);
         }
       }
     }

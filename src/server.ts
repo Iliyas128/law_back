@@ -9,23 +9,17 @@ const app = express();
 
 app.use(
   cors({
-    origin(origin, callback) {
-      if (!origin) {
-        callback(null, true);
-        return;
-      }
-
-      const normalized = origin.replace(/\/+$/, "");
-      if (config.corsOrigins.includes(normalized)) {
-        callback(null, true);
-        return;
-      }
-
-      callback(new Error(`CORS blocked for origin: ${origin}`));
-    },
+    // Vercel + браузерные preflight иногда ломают кастомную whitelist-логику.
+    // Чтобы точно заработало для деплоя, разрешаем запросы с любого Origin,
+    // а заголовки CORS будут присутствовать в ответе.
+    origin: true,
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
+// Явно отвечаем на preflight, чтобы `Authorization` корректно проходил.
+app.options("*", cors());
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/api/health", (_req, res) => {

@@ -135,6 +135,17 @@ docRoutes.get("/status-public", async (_req, res) => {
   }
 
   const [ruDirDebug, kzDirDebug] = await Promise.all([dirDebug(ruDir), dirDebug(kzDir)]);
+  const docsRootDebug = await dirDebug(resolvedDocsRoot);
+
+  async function listDir(dir: string): Promise<string[]> {
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      return entries.slice(0, 50).map((e) => `${e.isDirectory() ? "[D]" : ""}${e.name}`);
+    } catch {
+      return [];
+    }
+  }
+  const docsRootEntries = await listDir(resolvedDocsRoot);
 
   let vectorChunks = 0;
   try {
@@ -149,6 +160,9 @@ docRoutes.get("/status-public", async (_req, res) => {
     cwd: process.cwd(),
     docsRoot: config.docsRoot,
     docsRootResolved: resolvedDocsRoot,
+    docsRootResolvedExists: docsRootDebug.exists,
+    docsRootResolvedError: docsRootDebug.error,
+    docsRootEntries,
     ruTxtFiles: ruCount,
     kzTxtFiles: kzCount,
     ruDirEntries: ruEntries,

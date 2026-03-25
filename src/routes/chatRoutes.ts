@@ -11,7 +11,13 @@ const bodySchema = z.object({
   mode: z
     .preprocess((v) => (typeof v === "string" ? v.toLowerCase() : v), z.enum(["citizen", "official"]))
     .optional(),
-  lang: z.preprocess((v) => (typeof v === "string" ? v.toLowerCase() : v), z.enum(["ru", "kz"])).optional(),
+  lang: z
+    .preprocess((v) => {
+      if (typeof v !== "string") return undefined;
+      const s = v.toLowerCase();
+      return s === "ru" || s === "kz" ? s : undefined;
+    }, z.enum(["ru", "kz"]))
+    .optional(),
 });
 
 export const chatRoutes = Router();

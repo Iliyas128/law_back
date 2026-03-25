@@ -18,10 +18,14 @@ export const config = {
   geminiEmbeddingModel: process.env.GEMINI_EMBED_MODEL ?? "gemini-embedding-001",
   docsRoot:
     process.env.DOCS_ROOT ??
-    (process.env.VERCEL ? path.join("dist", "data", "docs") : path.join("data", "docs")),
+    (process.env.NODE_ENV === "production"
+      ? path.join("dist", "data", "docs")
+      : path.join("data", "docs")),
   vectorDbPath:
     process.env.VECTOR_DB_PATH ??
-    (process.env.VERCEL ? path.join("dist", "data", "db", "chunks.json") : path.join("data", "db", "chunks.json")),
+    (process.env.NODE_ENV === "production"
+      ? path.join("dist", "data", "db", "chunks.json")
+      : path.join("data", "db", "chunks.json")),
   topK: Number(process.env.RAG_TOP_K ?? 5),
   hybridVectorWeight: Number(process.env.RAG_VECTOR_WEIGHT ?? 0.7),
   hybridLexicalWeight: Number(process.env.RAG_LEXICAL_WEIGHT ?? 0.3),

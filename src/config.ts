@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import path from "node:path";
 
 dotenv.config();
 
@@ -15,8 +16,12 @@ export const config = {
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
   geminiChatModel: process.env.GEMINI_CHAT_MODEL ?? "gemini-2.5-flash",
   geminiEmbeddingModel: process.env.GEMINI_EMBED_MODEL ?? "gemini-embedding-001",
-  docsRoot: process.env.DOCS_ROOT ?? "data/docs",
-  vectorDbPath: process.env.VECTOR_DB_PATH ?? "data/db/chunks.json",
+  docsRoot:
+    process.env.DOCS_ROOT ??
+    (process.env.VERCEL ? path.join("dist", "data", "docs") : path.join("data", "docs")),
+  vectorDbPath:
+    process.env.VECTOR_DB_PATH ??
+    (process.env.VERCEL ? path.join("dist", "data", "db", "chunks.json") : path.join("data", "db", "chunks.json")),
   topK: Number(process.env.RAG_TOP_K ?? 5),
   hybridVectorWeight: Number(process.env.RAG_VECTOR_WEIGHT ?? 0.7),
   hybridLexicalWeight: Number(process.env.RAG_LEXICAL_WEIGHT ?? 0.3),

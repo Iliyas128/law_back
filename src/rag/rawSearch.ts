@@ -33,7 +33,7 @@ function parseLawAndArticle(fileName: string): { law: string; article: string } 
   const [lawRaw, articleRaw] = base.split("__");
   return {
     law: lawRaw || "Неизвестный закон",
-    article: articleRaw || "Без статьи",
+    article: articleRaw || "-",
   };
 }
 

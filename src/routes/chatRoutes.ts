@@ -6,6 +6,25 @@ import { generateAnswer, rankHybrid } from "../rag/gemini.js";
 import type { ChatResponsePayload } from "../types.js";
 import { loadRawChunks, rankRawLexical } from "../rag/rawSearch.js";
 
+function extractArticleNumberFromQuestion(q: string): string | null {
+  const m =
+    q.match(/статья\s+(\d{1,6})/i) ??
+    q.match(/ст\.\s*(\d{1,6})/i) ??
+    q.match(/№\s*(\d{1,6})/i);
+  return m?.[1] ?? null;
+}
+
+function extractArticleNumberFromChunkArticle(article: string | undefined | null): string | null {
+  if (!article) return null;
+  const s = String(article);
+  // article is expected to be just number now, but support old format too
+  const m =
+    s.match(/^\s*(\d{1,6})\s*$/) ??
+    s.match(/Статья\s+(\d{1,6})/i) ??
+    s.match(/Бап\s+(\d{1,6})/i);
+  return m?.[1] ?? null;
+}
+
 const bodySchema = z.object({
   message: z.string().min(2),
   mode: z
@@ -69,15 +88,28 @@ chatRoutes.post("/", async (req, res) => {
       return;
     }
 
+    // Если в вопросе явно указана "статья N", сильнее отфильтруем кандидаты.
+    const requestedArticleNumber = extractArticleNumberFromQuestion(parsed.data.message);
+    const candidateChunks =
+      requestedArticleNumber
+        ? (() => {
+            const filtered = langFiltered.filter((c) => {
+              const num = extractArticleNumberFromChunkArticle(c.article);
+              return num === requestedArticleNumber;
+            });
+            return filtered.length > 0 ? filtered : langFiltered;
+          })()
+        : langFiltered;
+
     const relevant =
       allChunks.length > 0
-        ? await rankHybrid(parsed.data.message, langFiltered, {
+        ? await rankHybrid(parsed.data.message, candidateChunks, {
             topK: config.topK,
             vectorWeight: config.hybridVectorWeight,
             lexicalWeight: config.hybridLexicalWeight,
             candidateMultiplier: config.hybridCandidateMultiplier,
           })
-        : rankRawLexical(parsed.data.message, langFiltered, config.topK);
+        : rankRawLexical(parsed.data.message, candidateChunks, config.topK);
     const answer = await generateAnswer(parsed.data.message, requestedMode ?? role, relevant);
     const firstSource = relevant[0];
 

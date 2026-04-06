@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { chunkDocument } from "./chunker.js";
+import { parseLawAndArticleFromPath } from "./docMeta.js";
 import type { RagChunk } from "./types.js";
 import type { Language } from "../types.js";
 
@@ -28,13 +29,11 @@ function lexicalScore(query: string, doc: string): number {
   return matches / q.length;
 }
 
-function parseLawAndArticle(fileName: string): { law: string; article: string } {
-  const base = fileName.replace(/\.[^.]+$/, "");
-  const [lawRaw, articleRaw] = base.split("__");
-  return {
-    law: lawRaw || "Неизвестный закон",
-    article: articleRaw || "-",
-  };
+function chunkLexicalScore(query: string, chunk: RagChunk): number {
+  return Math.max(
+    lexicalScore(query, chunk.content),
+    lexicalScore(query, `${chunk.law} ${chunk.article}`),
+  );
 }
 
 async function readTxtFiles(dirPath: string): Promise<string[]> {
@@ -81,7 +80,7 @@ export async function loadRawChunks(docsRoot: string): Promise<RagChunk[]> {
 
       for (const fullPath of files) {
         const text = await fs.readFile(fullPath, "utf-8");
-        const meta = parseLawAndArticle(path.basename(fullPath));
+        const meta = parseLawAndArticleFromPath(docsRoot, lang, fullPath);
         const chunks = chunkDocument(text, { defaultArticle: meta.article });
         for (let i = 0; i < chunks.length; i += 1) {
           localAll.push({
@@ -131,7 +130,9 @@ export async function loadRawChunks(docsRoot: string): Promise<RagChunk[]> {
     const resp = await fetch(url);
     if (!resp.ok) continue;
     const text = await resp.text();
-    const meta = parseLawAndArticle(path.basename(rel));
+    const docsRootAbs = path.join(process.cwd(), "data", "docs");
+    const absPath = path.join(process.cwd(), ...rel.split("/"));
+    const meta = parseLawAndArticleFromPath(docsRootAbs, lang, absPath);
     const chunks = chunkDocument(text, { defaultArticle: meta.article });
     for (let i = 0; i < chunks.length; i += 1) {
       all.push({
@@ -152,7 +153,7 @@ export async function loadRawChunks(docsRoot: string): Promise<RagChunk[]> {
 
 export function rankRawLexical(query: string, chunks: RagChunk[], topK: number): RagChunk[] {
   return chunks
-    .map((chunk) => ({ chunk, score: lexicalScore(query, chunk.content) }))
+    .map((chunk) => ({ chunk, score: chunkLexicalScore(query, chunk) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, topK)
     .map((x) => x.chunk);

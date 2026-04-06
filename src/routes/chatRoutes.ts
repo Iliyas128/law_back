@@ -2,26 +2,32 @@ import { Router } from "express";
 import { z } from "zod";
 import { VectorStore } from "../rag/vectorStore.js";
 import { config } from "../config.js";
-import { generateAnswer, rankHybrid } from "../rag/gemini.js";
+import {
+  analyzeRetrievedChunks,
+  expandSearchQueryForRetrieval,
+  generateUnifiedAnswer,
+  rankHybrid,
+} from "../rag/gemini.js";
 import type { ChatResponsePayload } from "../types.js";
 import { loadRawChunks, rankRawLexical } from "../rag/rawSearch.js";
+import { enrichQueryForRetrieval } from "../rag/queryExpand.js";
+import { boostKoap658ForWitnessQuestion } from "../rag/retrievalBoost.js";
 
 function extractArticleNumberFromQuestion(q: string): string | null {
   const m =
-    q.match(/статья\s+(\d{1,6})/i) ??
-    q.match(/ст\.\s*(\d{1,6})/i) ??
-    q.match(/№\s*(\d{1,6})/i);
+    q.match(/статья\s+(\d+(?:-\d+)?)/i) ??
+    q.match(/ст\.\s*(\d+(?:-\d+)?)/i) ??
+    q.match(/№\s*(\d+(?:-\d+)?)/i);
   return m?.[1] ?? null;
 }
 
 function extractArticleNumberFromChunkArticle(article: string | undefined | null): string | null {
   if (!article) return null;
   const s = String(article);
-  // article is expected to be just number now, but support old format too
   const m =
-    s.match(/^\s*(\d{1,6})\s*$/) ??
-    s.match(/Статья\s+(\d{1,6})/i) ??
-    s.match(/Бап\s+(\d{1,6})/i);
+    s.match(/^\s*(\d+(?:-\d+)?)\s*$/) ??
+    s.match(/Статья\s+(\d+(?:-\d+)?)/i) ??
+    s.match(/Бап\s+(\d+(?:-\d+)?)/i);
   return m?.[1] ?? null;
 }
 
@@ -30,8 +36,6 @@ const bodySchema = z.object({
   mode: z
     .preprocess((v) => (typeof v === "string" ? v.toLowerCase() : v), z.enum(["citizen", "official"]))
     .optional(),
-  // Не валидируем lang как строгий enum на сервере, чтобы деплой/окружение фронта
-  // не вызывало 400. Далее нормализуем вручную.
   lang: z.preprocess((v) => (typeof v === "string" ? v.toLowerCase() : undefined), z.string().optional()).optional(),
 });
 
@@ -39,12 +43,11 @@ export const chatRoutes = Router();
 
 chatRoutes.post("/", async (req, res) => {
   let body: unknown = req.body;
-  // Иногда в серверлесс окружениях тело может прийти как строка.
   if (typeof body === "string") {
     try {
       body = JSON.parse(body);
     } catch {
-      // оставляем как строку, zod даст понятную ошибку
+      // zod даст ошибку
     }
   }
 
@@ -53,9 +56,6 @@ chatRoutes.post("/", async (req, res) => {
     res.status(400).json({ error: "Invalid payload", details: parsed.error.flatten() });
     return;
   }
-
-  const requestedMode = parsed.data.mode;
-  const role = requestedMode ?? "citizen";
 
   try {
     const store = new VectorStore(config.vectorDbPath);
@@ -88,36 +88,80 @@ chatRoutes.post("/", async (req, res) => {
       return;
     }
 
-    // Если в вопросе явно указана "статья N", сильнее отфильтруем кандидаты.
     const requestedArticleNumber = extractArticleNumberFromQuestion(parsed.data.message);
-    const candidateChunks =
-      requestedArticleNumber
-        ? (() => {
-            const filtered = langFiltered.filter((c) => {
-              const num = extractArticleNumberFromChunkArticle(c.article);
-              return num === requestedArticleNumber;
-            });
-            return filtered.length > 0 ? filtered : langFiltered;
-          })()
-        : langFiltered;
+    const candidateChunks = requestedArticleNumber
+      ? (() => {
+          const filtered = langFiltered.filter((c) => {
+            const num = extractArticleNumberFromChunkArticle(c.article);
+            return num === requestedArticleNumber;
+          });
+          return filtered.length > 0 ? filtered : langFiltered;
+        })()
+      : langFiltered;
 
-    const relevant =
+    const retrievalK = config.retrievalTopK;
+    const heuristicQuery = enrichQueryForRetrieval(parsed.data.message);
+    let retrievalQuery = heuristicQuery;
+    if (config.ragLlmQueryExpand && langFiltered.length > 0) {
+      const llmLine = await expandSearchQueryForRetrieval(parsed.data.message);
+      if (llmLine) {
+        retrievalQuery = `${heuristicQuery}\n${llmLine}`;
+      }
+    }
+
+    const topRanked =
       allChunks.length > 0
-        ? await rankHybrid(parsed.data.message, candidateChunks, {
-            topK: config.topK,
+        ? await rankHybrid(retrievalQuery, candidateChunks, {
+            topK: retrievalK,
             vectorWeight: config.hybridVectorWeight,
             lexicalWeight: config.hybridLexicalWeight,
             candidateMultiplier: config.hybridCandidateMultiplier,
           })
-        : rankRawLexical(parsed.data.message, candidateChunks, config.topK);
-    const answer = await generateAnswer(parsed.data.message, requestedMode ?? role, relevant);
-    const firstSource = relevant[0];
+        : rankRawLexical(retrievalQuery, candidateChunks, retrievalK);
+
+    const topRelevant = boostKoap658ForWitnessQuestion(
+      parsed.data.message,
+      topRanked,
+      candidateChunks,
+      retrievalK,
+    );
+
+    const selection = await analyzeRetrievedChunks(parsed.data.message, topRelevant);
+
+    if (selection.needsClarification) {
+      const payload: ChatResponsePayload = {
+        answer:
+          selection.clarificationQuestion?.trim() ||
+          "Уточните, пожалуйста, вопрос: о какой ситуации и каком законе речь?",
+        law: "—",
+        article: "-",
+        sources: [],
+        needs_clarification: true,
+      };
+      res.json(payload);
+      return;
+    }
+
+    const selectedChunks = selection.selectedIndices
+      .map((i) => topRelevant[i])
+      .filter((c): c is NonNullable<typeof c> => Boolean(c));
+
+    const contextsForAnswer = selectedChunks.length > 0 ? selectedChunks : topRelevant.slice(0, 4);
+
+    const answer = await generateUnifiedAnswer(parsed.data.message, contextsForAnswer);
+    const firstSource = contextsForAnswer[0];
 
     const payload: ChatResponsePayload = {
       answer,
       law: firstSource?.law ?? "Не найдено",
       article: firstSource?.article ?? "-",
-      sources: relevant.map((r) => ({ law: r.law, article: r.article, lang: r.lang })),
+      sources: contextsForAnswer.map((r) => ({
+        law: r.law,
+        article: r.article,
+        lang: r.lang,
+        text: r.content,
+      })),
+      needs_clarification: false,
     };
 
     res.json(payload);

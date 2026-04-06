@@ -3,3 +3,7 @@
 node_modules/
 dist/
 build/
+.chunks.json
+
+# Локально генерируется ingest (эмбеддинги), очень большой файл — не в репозиторий
+data/db/chunks.json

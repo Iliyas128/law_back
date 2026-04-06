@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "postbuild": "node scripts/copy-docs.mjs",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "ingest": "tsx scripts/run-ingest.ts"
   },
   "keywords": [],
   "author": "",

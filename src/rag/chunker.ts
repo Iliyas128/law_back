@@ -11,15 +11,16 @@ interface BuildChunksOptions {
 function extractArticleNumber(headerLine: string): string | null {
   const s = headerLine.trim();
   const m =
-    s.match(/Статья\s+(\d+)/i) ??
-    s.match(/Бап\s+(\d+)/i) ??
+    s.match(/Статья\s+(\d+(?:-\d+)?)(?=\s*\.)/i) ??
+    s.match(/Бап\s+(\d+(?:-\d+)?)(?=\s*\.)/i) ??
     s.match(/^(\d{1,6})$/);
   return m?.[1] ?? null;
 }
 
+// Заголовок статьи: «Статья N. Текст», не сноска «Статья N с изменениями».
 // Нормативные тексты часто имеют ведущие пробелы перед заголовком статьи.
-// Поэтому позволяем \s* в начале строки.
-const ARTICLE_HEADER_REGEX = /^\s*(Статья\s+\d+[^\n]*|Бап\s+\d+[^\n]*)\s*$/gim;
+const ARTICLE_HEADER_REGEX =
+  /^\s*(Статья\s+\d+(?:-\d+)?\.\s+[^\n]+|Бап\s+\d+(?:-\d+)?\.\s+[^\n]+)\s*$/gim;
 
 function splitIntoArticleSections(text: string): Array<{ article: string; body: string }> {
   const clean = text.replace(/\r/g, "").trim();

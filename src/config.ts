@@ -26,10 +26,15 @@ export const config = {
     (process.env.NODE_ENV === "production"
       ? path.join("dist", "data", "db", "chunks.json")
       : path.join("data", "db", "chunks.json")),
-  topK: Number(process.env.RAG_TOP_K ?? 5),
+  /** Сколько чанков отбирать после гибридного ранжирования (далее модель выберет 3–4). */
+  retrievalTopK: Number(process.env.RAG_RETRIEVAL_TOP_K ?? 12),
+  /** @deprecated используйте retrievalTopK; оставлено для совместимости */
+  topK: Number(process.env.RAG_TOP_K ?? 10),
   hybridVectorWeight: Number(process.env.RAG_VECTOR_WEIGHT ?? 0.7),
   hybridLexicalWeight: Number(process.env.RAG_LEXICAL_WEIGHT ?? 0.3),
-  hybridCandidateMultiplier: Number(process.env.RAG_CANDIDATE_MULTIPLIER ?? 4),
+  hybridCandidateMultiplier: Number(process.env.RAG_CANDIDATE_MULTIPLIER ?? 6),
+  /** Дополнять запрос коротким LLM-списком терминов для поиска (отключить: RAG_LLM_QUERY_EXPAND=0). */
+  ragLlmQueryExpand: process.env.RAG_LLM_QUERY_EXPAND !== "0",
   embedRetries: Number(process.env.RAG_EMBED_RETRIES ?? 5),
   embedRetryBaseMs: Number(process.env.RAG_EMBED_RETRY_BASE_MS ?? 800),
   corsOrigins: parseOrigins(

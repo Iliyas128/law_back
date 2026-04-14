@@ -3,9 +3,11 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { requireAuth } from "../middleware/auth.js";
 import { ingestAllDocuments } from "../rag/ingest.js";
+import { PgVectorStore } from "../rag/pgVectorStore.js";
 import { config } from "../config.js";
 
 export const docRoutes = Router();
+const pgVectorStore = new PgVectorStore();
 
 docRoutes.get("/status", requireAuth, async (req, res) => {
   if (req.user?.role !== "official") {
@@ -14,7 +16,6 @@ docRoutes.get("/status", requireAuth, async (req, res) => {
   }
 
   const resolvedDocsRoot = path.resolve(config.docsRoot);
-  const resolvedVectorDb = path.resolve(config.vectorDbPath);
 
   const countTxtRecursive = async (dir: string): Promise<number> => {
     try {
@@ -43,8 +44,8 @@ docRoutes.get("/status", requireAuth, async (req, res) => {
   let manifestFilesCount = 0;
   let firstManifestFile: string | null = null;
   try {
-    const raw = await fs.readFile(resolvedVectorDb, "utf-8");
-    vectorChunks = (JSON.parse(raw) as unknown[]).length;
+    await pgVectorStore.ensureSchema();
+    vectorChunks = await pgVectorStore.count();
   } catch {
     vectorChunks = 0;
   }
@@ -70,8 +71,7 @@ docRoutes.get("/status", requireAuth, async (req, res) => {
     docsRootResolved: resolvedDocsRoot,
     ruTxtFiles: ruCount,
     kzTxtFiles: kzCount,
-    vectorDbPath: config.vectorDbPath,
-    vectorDbResolved: resolvedVectorDb,
+    pgVectorTable: config.pgVectorTable,
     vectorChunks,
     docsManifestFilesCount: manifestFilesCount,
     docsManifestFirstFile: firstManifestFile,
@@ -82,7 +82,6 @@ docRoutes.get("/status", requireAuth, async (req, res) => {
 // почему backend на Vercel "не видит" документы.
 docRoutes.get("/status-public", async (_req, res) => {
   const resolvedDocsRoot = path.resolve(config.docsRoot);
-  const resolvedVectorDb = path.resolve(config.vectorDbPath);
 
   const listDirEntries = async (dir: string): Promise<string[]> => {
     try {
@@ -167,8 +166,8 @@ docRoutes.get("/status-public", async (_req, res) => {
 
   let vectorChunks = 0;
   try {
-    const raw = await fs.readFile(resolvedVectorDb, "utf-8");
-    vectorChunks = (JSON.parse(raw) as unknown[]).length;
+    await pgVectorStore.ensureSchema();
+    vectorChunks = await pgVectorStore.count();
   } catch {
     vectorChunks = 0;
   }
@@ -191,8 +190,7 @@ docRoutes.get("/status-public", async (_req, res) => {
     kzDirExists: kzDirDebug.exists,
     ruDirError: ruDirDebug.error,
     kzDirError: kzDirDebug.error,
-    vectorDbPath: config.vectorDbPath,
-    vectorDbResolved: resolvedVectorDb,
+    pgVectorTable: config.pgVectorTable,
     vectorChunks,
   });
 });
@@ -204,11 +202,11 @@ docRoutes.post("/ingest", requireAuth, async (req, res) => {
   }
 
   try {
-    const result = await ingestAllDocuments(config.docsRoot, config.vectorDbPath);
+    const result = await ingestAllDocuments(config.docsRoot, pgVectorStore);
     res.json({
       ok: true,
       ...result,
-      vectorDbPath: config.vectorDbPath,
+      pgVectorTable: config.pgVectorTable,
     });
   } catch (error) {
     res.status(500).json({

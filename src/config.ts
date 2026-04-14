@@ -26,6 +26,8 @@ export const config = {
     (process.env.NODE_ENV === "production"
       ? path.join("dist", "data", "db", "chunks.json")
       : path.join("data", "db", "chunks.json")),
+  pgUrl: process.env.PG_URL ?? process.env.DATABASE_URL ?? "",
+  pgVectorTable: process.env.PG_VECTOR_TABLE ?? "rag_chunks",
   /** Сколько чанков отбирать после гибридного ранжирования (далее модель выберет 3–4). */
   retrievalTopK: Number(process.env.RAG_RETRIEVAL_TOP_K ?? 12),
   /** @deprecated используйте retrievalTopK; оставлено для совместимости */

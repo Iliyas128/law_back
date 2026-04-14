@@ -20,6 +20,11 @@ const OUT_DIR = path.join(ROOT, "data", "docs", "ru", "Закон Республ
 const CHAPTER_RE = /^\s*Глава\s+(\d+)\.\s*(.*)$/;
 const ARTICLE_RE = /^\s*Статья\s+(\d+(?:-\d+)?)\.\s*(.*)$/;
 
+/** Убирает недопустимые символы; длину не режем — полные заголовки в имени папки/файла. */
+function sanitizeFileName(s) {
+  return s.replace(/[<>:"/\\|?*]/g, " ").replace(/\s+/g, " ").trim();
+}
+
 async function main() {
   const raw = await fs.readFile(SRC, "utf-8");
   const lines = raw.replace(/\r/g, "").split("\n");
@@ -53,10 +58,17 @@ async function main() {
   function ensureChapter(chapterEventIndex) {
     const ev = events[chapterEventIndex];
     if (ev.type !== "chapter") return null;
+    const nextEv = events[chapterEventIndex + 1];
+    const titleEnd = nextEv ? nextEv.line : lines.length;
+    const titleLines = lines.slice(ev.line, titleEnd);
+    const titleText = titleLines
+      .filter((ln) => !/^\s*Сноска\./.test(ln))
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
     const key = ev.num;
     if (!byChapterKey.has(key)) {
-      // Короткие имена папок (Глава 01 …), чтобы пути не превышали лимит Windows/Git
-      const chapterDirName = `Глава ${String(ev.num).padStart(2, "0")}`;
+      const chapterDirName = sanitizeFileName(titleText);
       byChapterKey.set(key, {
         chapterNum: ev.num,
         chapterDirName,
@@ -86,7 +98,7 @@ async function main() {
       const nextEv = events[i + 1];
       const bodyEnd = nextEv ? nextEv.line : lines.length;
       const body = lines.slice(ev.line, bodyEnd).join("\n").trimEnd();
-      const fileName = `Статья ${ev.num}.txt`;
+      const fileName = sanitizeFileName(`Статья ${ev.num}. ${ev.titleRest}.txt`);
       ch.articles.push({ fileName, body });
     }
   }

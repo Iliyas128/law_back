@@ -1,17 +1,17 @@
 import { Router } from "express";
 import { z } from "zod";
-import { VectorStore } from "../rag/vectorStore.js";
 import { config } from "../config.js";
 import {
   analyzeRetrievedChunks,
   expandSearchQueryForRetrieval,
+  embedText,
   generateUnifiedAnswer,
-  rankHybrid,
 } from "../rag/gemini.js";
 import type { ChatResponsePayload } from "../types.js";
 import { loadRawChunks, rankRawLexical } from "../rag/rawSearch.js";
 import { enrichQueryForRetrieval } from "../rag/queryExpand.js";
 import { boostKoap658ForWitnessQuestion } from "../rag/retrievalBoost.js";
+import { PgVectorStore } from "../rag/pgVectorStore.js";
 
 function extractArticleNumberFromQuestion(q: string): string | null {
   const m =
@@ -40,6 +40,7 @@ const bodySchema = z.object({
 });
 
 export const chatRoutes = Router();
+const pgVectorStore = new PgVectorStore();
 
 chatRoutes.post("/", async (req, res) => {
   let body: unknown = req.body;
@@ -58,10 +59,15 @@ chatRoutes.post("/", async (req, res) => {
   }
 
   try {
-    const store = new VectorStore(config.vectorDbPath);
-    const allChunks = await store.load();
-    const searchableChunks = allChunks.length > 0 ? allChunks : await loadRawChunks(config.docsRoot);
-    if (searchableChunks.length === 0) {
+    let vectorCount = 0;
+    try {
+      await pgVectorStore.ensureSchema();
+      vectorCount = await pgVectorStore.count();
+    } catch {
+      vectorCount = 0;
+    }
+    const searchableChunks = vectorCount > 0 ? null : await loadRawChunks(config.docsRoot);
+    if (searchableChunks && searchableChunks.length === 0) {
       res.json({
         answer:
           "Не удалось найти документы для поиска. Добавьте .txt законы в data/docs/ru и data/docs/kz.",
@@ -75,21 +81,26 @@ chatRoutes.post("/", async (req, res) => {
     const normalizedLang =
       parsed.data.lang === "ru" || parsed.data.lang === "kz" ? parsed.data.lang : undefined;
 
-    const langFiltered = normalizedLang
-      ? searchableChunks.filter((chunk) => chunk.lang === normalizedLang)
-      : searchableChunks;
+    const langFiltered = searchableChunks
+      ? normalizedLang
+        ? searchableChunks.filter((chunk) => chunk.lang === normalizedLang)
+        : searchableChunks
+      : [];
     if (langFiltered.length === 0) {
-      res.json({
-        answer: `Для языка ${normalizedLang} пока нет проиндексированных документов.`,
-        law: "Нет данных",
-        article: "-",
-        sources: [],
-      });
-      return;
+      if (searchableChunks) {
+        res.json({
+          answer: `Для языка ${normalizedLang} пока нет проиндексированных документов.`,
+          law: "Нет данных",
+          article: "-",
+          sources: [],
+        });
+        return;
+      }
     }
 
     const requestedArticleNumber = extractArticleNumberFromQuestion(parsed.data.message);
-    const candidateChunks = requestedArticleNumber
+    const candidateChunks = searchableChunks
+      ? requestedArticleNumber
       ? (() => {
           const filtered = langFiltered.filter((c) => {
             const num = extractArticleNumberFromChunkArticle(c.article);
@@ -97,12 +108,13 @@ chatRoutes.post("/", async (req, res) => {
           });
           return filtered.length > 0 ? filtered : langFiltered;
         })()
-      : langFiltered;
+      : langFiltered
+      : [];
 
     const retrievalK = config.retrievalTopK;
     const heuristicQuery = enrichQueryForRetrieval(parsed.data.message);
     let retrievalQuery = heuristicQuery;
-    if (config.ragLlmQueryExpand && langFiltered.length > 0) {
+    if (config.ragLlmQueryExpand && (vectorCount > 0 || langFiltered.length > 0)) {
       const llmLine = await expandSearchQueryForRetrieval(parsed.data.message);
       if (llmLine) {
         retrievalQuery = `${heuristicQuery}\n${llmLine}`;
@@ -110,21 +122,39 @@ chatRoutes.post("/", async (req, res) => {
     }
 
     const topRanked =
-      allChunks.length > 0
-        ? await rankHybrid(retrievalQuery, candidateChunks, {
-            topK: retrievalK,
-            vectorWeight: config.hybridVectorWeight,
-            lexicalWeight: config.hybridLexicalWeight,
-            candidateMultiplier: config.hybridCandidateMultiplier,
-          })
+      vectorCount > 0
+        ? await (async () => {
+            const qEmbed = await embedText(retrievalQuery);
+            const limit = Math.max(retrievalK, retrievalK * config.hybridCandidateMultiplier);
+            const rows = await pgVectorStore.searchByEmbedding(qEmbed, {
+              lang: normalizedLang,
+              limit,
+            });
+            const byArticle = requestedArticleNumber
+              ? rows.filter(
+                  (r) =>
+                    extractArticleNumberFromChunkArticle(r.article) === requestedArticleNumber,
+                )
+              : rows;
+            return (byArticle.length > 0 ? byArticle : rows).slice(0, retrievalK);
+          })()
         : rankRawLexical(retrievalQuery, candidateChunks, retrievalK);
 
     const topRelevant = boostKoap658ForWitnessQuestion(
       parsed.data.message,
       topRanked,
-      candidateChunks,
+      vectorCount > 0 ? topRanked : candidateChunks,
       retrievalK,
     );
+    if (topRelevant.length === 0) {
+      res.json({
+        answer: "Пока не удалось найти релевантные нормы для этого запроса. Уточните формулировку.",
+        law: "Нет данных",
+        article: "-",
+        sources: [],
+      });
+      return;
+    }
 
     const selection = await analyzeRetrievedChunks(parsed.data.message, topRelevant);
 

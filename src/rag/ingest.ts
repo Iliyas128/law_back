@@ -4,7 +4,7 @@ import { chunkDocument } from "./chunker.js";
 import { parseLawAndArticleFromPath } from "./docMeta.js";
 import { buildTextForEmbedding } from "./embeddingText.js";
 import { embedText } from "./gemini.js";
-import { VectorStore } from "./vectorStore.js";
+import { PgVectorStore } from "./pgVectorStore.js";
 import type { RagChunk } from "./types.js";
 import type { Language } from "../types.js";
 
@@ -38,9 +38,8 @@ const INGEST_LOG_EVERY_CHUNKS = Number(process.env.INGEST_LOG_EVERY ?? 40);
 
 export async function ingestAllDocuments(
   docsRoot: string,
-  vectorDbPath: string,
+  pgVectorStore: PgVectorStore,
 ): Promise<{ totalChunks: number; files: number; skippedChunks: number }> {
-  const vectorStore = new VectorStore(vectorDbPath);
   const allChunks: RagChunk[] = [];
   let fileCounter = 0;
   let skippedChunks = 0;
@@ -111,8 +110,9 @@ export async function ingestAllDocuments(
     }
   }
 
-  console.log(`[ingest] Сохраняю ${allChunks.length} чанков в ${vectorDbPath}…`);
-  await vectorStore.save(allChunks);
+  console.log(`[ingest] Сохраняю ${allChunks.length} чанков в PostgreSQL (pgvector)…`);
+  await pgVectorStore.ensureSchema();
+  await pgVectorStore.replaceAll(allChunks);
   const totalSec = ((Date.now() - started) / 1000).toFixed(1);
   console.log(`[ingest] Готово за ${totalSec}s.`);
   return { totalChunks: allChunks.length, files: fileCounter, skippedChunks };

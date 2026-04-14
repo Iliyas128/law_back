@@ -11,7 +11,7 @@ Backend для проекта "Знай свои права" с RAG-чатом �
   - загрузка документов из `data/docs/ru` и `data/docs/kz`
   - чанкинг текста
   - эмбеддинги Gemini
-  - локальное хранилище в `data/db/chunks.json`
+  - хранилище в PostgreSQL + `pgvector` (таблица `rag_chunks`)
 - Чат API, возвращающий:
   - `answer`
   - `law`
@@ -26,6 +26,13 @@ cp .env.example .env
 ```
 
 Заполните `GEMINI_API_KEY` в `.env`.
+Также задайте `PG_URL` (или `DATABASE_URL`) для подключения к PostgreSQL.
+
+Для PostgreSQL должен быть установлен extension:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
 
 ## Запуск
 
@@ -54,6 +61,8 @@ npm run dev
 ### 2) Ingestion документов (только official)
 
 `POST /api/docs/ingest`
+
+Индексация записывает чанки в PostgreSQL (`pgvector`), без использования большого локального `chunks.json`.
 
 Header:
 

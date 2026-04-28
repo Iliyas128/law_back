@@ -51,6 +51,12 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
   });
 });
 
-app.listen(config.port, () => {
-  console.log(`law_back is running on http://localhost:${config.port}`);
-});
+export default app;
+export { app };
+
+/** Vercel serverless: один инстанс без listen; локально и Docker — обычный HTTP-сервер. */
+if (process.env.VERCEL !== "1") {
+  app.listen(config.port, () => {
+    console.log(`law_back is running on http://localhost:${config.port}`);
+  });
+}

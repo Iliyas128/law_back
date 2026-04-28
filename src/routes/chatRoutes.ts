@@ -6,12 +6,14 @@ import {
   expandSearchQueryForRetrieval,
   embedText,
   generateUnifiedAnswer,
+  rankHybrid,
 } from "../rag/gemini.js";
 import type { ChatResponsePayload } from "../types.js";
 import { loadRawChunks, rankRawLexical } from "../rag/rawSearch.js";
 import { enrichQueryForRetrieval } from "../rag/queryExpand.js";
 import { boostKoap658ForWitnessQuestion } from "../rag/retrievalBoost.js";
 import { PgVectorStore } from "../rag/pgVectorStore.js";
+import { VectorStore } from "../rag/vectorStore.js";
 
 function extractArticleNumberFromQuestion(q: string): string | null {
   const m =
@@ -41,6 +43,7 @@ const bodySchema = z.object({
 
 export const chatRoutes = Router();
 const pgVectorStore = new PgVectorStore();
+const localVectorStore = new VectorStore(config.vectorDbPath);
 
 chatRoutes.post("/", async (req, res) => {
   let body: unknown = req.body;
@@ -59,15 +62,33 @@ chatRoutes.post("/", async (req, res) => {
   }
 
   try {
-    let vectorCount = 0;
-    try {
-      await pgVectorStore.ensureSchema();
-      vectorCount = await pgVectorStore.count();
-    } catch {
-      vectorCount = 0;
+    let sourceMode: "localVectors" | "pgVectors" | "raw" = "raw";
+    let localOrRawChunks: Awaited<ReturnType<typeof loadRawChunks>> = [];
+    let hasPgVectors = false;
+
+    if (config.useLocalVectorDb) {
+      const local = await localVectorStore.load();
+      if (local.length > 0) {
+        sourceMode = "localVectors";
+        localOrRawChunks = local;
+      } else {
+        localOrRawChunks = await loadRawChunks(config.docsRoot);
+      }
+    } else {
+      try {
+        await pgVectorStore.ensureSchema();
+        hasPgVectors = (await pgVectorStore.count()) > 0;
+      } catch {
+        hasPgVectors = false;
+      }
+      if (hasPgVectors) {
+        sourceMode = "pgVectors";
+      } else {
+        localOrRawChunks = await loadRawChunks(config.docsRoot);
+      }
     }
-    const searchableChunks = vectorCount > 0 ? null : await loadRawChunks(config.docsRoot);
-    if (searchableChunks && searchableChunks.length === 0) {
+
+    if (sourceMode === "raw" && localOrRawChunks.length === 0) {
       res.json({
         answer:
           "Не удалось найти документы для поиска. Добавьте .txt законы в data/docs/ru и data/docs/kz.",
@@ -81,13 +102,14 @@ chatRoutes.post("/", async (req, res) => {
     const normalizedLang =
       parsed.data.lang === "ru" || parsed.data.lang === "kz" ? parsed.data.lang : undefined;
 
-    const langFiltered = searchableChunks
-      ? normalizedLang
-        ? searchableChunks.filter((chunk) => chunk.lang === normalizedLang)
-        : searchableChunks
-      : [];
+    const langFiltered =
+      sourceMode === "pgVectors"
+        ? []
+        : normalizedLang
+          ? localOrRawChunks.filter((chunk) => chunk.lang === normalizedLang)
+          : localOrRawChunks;
     if (langFiltered.length === 0) {
-      if (searchableChunks) {
+      if (sourceMode !== "pgVectors") {
         res.json({
           answer: `Для языка ${normalizedLang} пока нет проиндексированных документов.`,
           law: "Нет данных",
@@ -99,22 +121,23 @@ chatRoutes.post("/", async (req, res) => {
     }
 
     const requestedArticleNumber = extractArticleNumberFromQuestion(parsed.data.message);
-    const candidateChunks = searchableChunks
-      ? requestedArticleNumber
-      ? (() => {
-          const filtered = langFiltered.filter((c) => {
-            const num = extractArticleNumberFromChunkArticle(c.article);
-            return num === requestedArticleNumber;
-          });
-          return filtered.length > 0 ? filtered : langFiltered;
-        })()
-      : langFiltered
-      : [];
+    const candidateChunks =
+      sourceMode === "pgVectors"
+        ? []
+        : requestedArticleNumber
+          ? (() => {
+              const filtered = langFiltered.filter((c) => {
+                const num = extractArticleNumberFromChunkArticle(c.article);
+                return num === requestedArticleNumber;
+              });
+              return filtered.length > 0 ? filtered : langFiltered;
+            })()
+          : langFiltered;
 
     const retrievalK = config.retrievalTopK;
     const heuristicQuery = enrichQueryForRetrieval(parsed.data.message);
     let retrievalQuery = heuristicQuery;
-    if (config.ragLlmQueryExpand && (vectorCount > 0 || langFiltered.length > 0)) {
+    if (config.ragLlmQueryExpand && (sourceMode === "pgVectors" || langFiltered.length > 0)) {
       const llmLine = await expandSearchQueryForRetrieval(parsed.data.message);
       if (llmLine) {
         retrievalQuery = `${heuristicQuery}\n${llmLine}`;
@@ -122,7 +145,7 @@ chatRoutes.post("/", async (req, res) => {
     }
 
     const topRanked =
-      vectorCount > 0
+      sourceMode === "pgVectors"
         ? await (async () => {
             const qEmbed = await embedText(retrievalQuery);
             const limit = Math.max(retrievalK, retrievalK * config.hybridCandidateMultiplier);
@@ -138,12 +161,19 @@ chatRoutes.post("/", async (req, res) => {
               : rows;
             return (byArticle.length > 0 ? byArticle : rows).slice(0, retrievalK);
           })()
-        : rankRawLexical(retrievalQuery, candidateChunks, retrievalK);
+        : sourceMode === "localVectors"
+          ? await rankHybrid(retrievalQuery, candidateChunks, {
+              topK: retrievalK,
+              vectorWeight: config.hybridVectorWeight,
+              lexicalWeight: config.hybridLexicalWeight,
+              candidateMultiplier: config.hybridCandidateMultiplier,
+            })
+          : rankRawLexical(retrievalQuery, candidateChunks, retrievalK);
 
     const topRelevant = boostKoap658ForWitnessQuestion(
       parsed.data.message,
       topRanked,
-      vectorCount > 0 ? topRanked : candidateChunks,
+      sourceMode === "pgVectors" ? topRanked : candidateChunks,
       retrievalK,
     );
     if (topRelevant.length === 0) {

@@ -9,7 +9,9 @@
     "postbuild": "node scripts/copy-docs.mjs",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "ingest": "tsx scripts/run-ingest.ts"
+    "ingest": "tsx scripts/run-ingest.ts",
+    "db:check": "tsx scripts/pg-check.ts",
+    "import:chunks": "tsx scripts/import-chunks-json-to-pg.ts"
   },
   "keywords": [],
   "author": "",

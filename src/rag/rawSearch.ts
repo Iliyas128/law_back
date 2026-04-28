@@ -1,13 +1,12 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { config } from "../config.js";
 import { chunkDocument } from "./chunker.js";
 import { parseLawAndArticleFromPath } from "./docMeta.js";
 import type { RagChunk } from "./types.js";
 import type { Language } from "../types.js";
 
 let cachedChunks: RagChunk[] | null = null;
-
-const GITHUB_RAW_BASE = "https://raw.githubusercontent.com/Iliyas128/law_back/main";
 
 function tokenize(text: string): string[] {
   return text
@@ -120,13 +119,18 @@ export async function loadRawChunks(docsRoot: string): Promise<RagChunk[]> {
     return cachedChunks;
   }
 
+  if (!config.docsRawBase) {
+    cachedChunks = [];
+    return cachedChunks;
+  }
+
   for (const rel of manifest.files) {
     // expecting: data/docs/ru/<file>.txt or data/docs/kz/<file>.txt
     const parts = rel.split("/");
     const lang = parts[2] as Language | undefined; // ["data","docs","ru",...]
     if (lang !== "ru" && lang !== "kz") continue;
 
-    const url = `${GITHUB_RAW_BASE}/${rel}`;
+    const url = `${config.docsRawBase}/${rel}`;
     const resp = await fetch(url);
     if (!resp.ok) continue;
     const text = await resp.text();

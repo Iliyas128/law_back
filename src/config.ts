@@ -10,6 +10,14 @@ function parseOrigins(raw: string): string[] {
     .filter(Boolean);
 }
 
+/** Имя таблицы только [a-zA-Z0-9_], иначе SQL-инъекция через env. */
+function sanitizePgTableName(raw: string, fallback: string): string {
+  const s = raw.trim();
+  if (/^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/.test(s)) return s;
+  console.warn(`[config] Invalid PG_VECTOR_TABLE "${raw}", using "${fallback}"`);
+  return fallback;
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 8787),
   jwtSecret: process.env.JWT_SECRET ?? "change-this-secret-in-env",
@@ -27,7 +35,12 @@ export const config = {
       ? path.join("dist", "data", "db", "chunks.json")
       : path.join("data", "db", "chunks.json")),
   pgUrl: process.env.PG_URL ?? process.env.DATABASE_URL ?? "",
-  pgVectorTable: process.env.PG_VECTOR_TABLE ?? "rag_chunks",
+  pgVectorTable: sanitizePgTableName(process.env.PG_VECTOR_TABLE ?? "rag_chunks", "rag_chunks"),
+  pgSslNoVerify: process.env.PG_SSL_NO_VERIFY === "1",
+  useLocalVectorDb:
+    process.env.USE_LOCAL_VECTOR_DB != null
+      ? process.env.USE_LOCAL_VECTOR_DB === "1"
+      : process.env.NODE_ENV !== "production",
   /** Сколько чанков отбирать после гибридного ранжирования (далее модель выберет 3–4). */
   retrievalTopK: Number(process.env.RAG_RETRIEVAL_TOP_K ?? 12),
   /** @deprecated используйте retrievalTopK; оставлено для совместимости */
@@ -42,4 +55,14 @@ export const config = {
   corsOrigins: parseOrigins(
     process.env.CORS_ORIGINS ?? "http://localhost:8080,http://localhost:5173,https://law-front1.vercel.app",
   ),
+  /**
+   * База для fallback загрузки .txt с GitHub Raw (без trailing slash).
+   * DOCS_RAW_BASE= пусто или "0" — не тянуть с GitHub (только локальные файлы / PG).
+   */
+  docsRawBase: (() => {
+    const raw = process.env.DOCS_RAW_BASE;
+    if (raw === "" || raw === "0") return "";
+    const base = (raw ?? "https://raw.githubusercontent.com/Iliyas128/law_back/main").replace(/\/+$/, "");
+    return base;
+  })(),
 };

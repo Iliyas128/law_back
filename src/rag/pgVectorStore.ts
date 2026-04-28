@@ -28,7 +28,22 @@ export class PgVectorStore {
     private readonly tableName: string = config.pgVectorTable,
     pgUrl: string = config.pgUrl,
   ) {
-    this.pool = pgUrl ? new Pool({ connectionString: pgUrl }) : null;
+    let connectionString = pgUrl;
+    if (connectionString && config.pgSslNoVerify) {
+      const parsed = new URL(connectionString);
+      parsed.searchParams.delete("sslmode");
+      connectionString = parsed.toString();
+    }
+
+    this.pool = pgUrl
+      ? new Pool({
+          connectionString,
+          ssl: config.pgSslNoVerify ? { rejectUnauthorized: false } : undefined,
+          statement_timeout: 0,
+          query_timeout: 0,
+          idleTimeoutMillis: 30000,
+        })
+      : null;
   }
 
   private getPoolOrThrow(): Pool {
@@ -40,6 +55,7 @@ export class PgVectorStore {
 
   async ensureSchema(): Promise<void> {
     const pool = this.getPoolOrThrow();
+    await pool.query("SET statement_timeout TO 0");
     await pool.query("CREATE EXTENSION IF NOT EXISTS vector;");
     await pool.query(`
       CREATE TABLE IF NOT EXISTS ${this.tableName} (
@@ -52,11 +68,8 @@ export class PgVectorStore {
         source_path TEXT NOT NULL
       );
     `);
-    await pool.query(`
-      CREATE INDEX IF NOT EXISTS ${this.tableName}_embedding_idx
-      ON ${this.tableName} USING ivfflat (embedding vector_cosine_ops)
-      WITH (lists = 100);
-    `);
+    // For Gemini embeddings (3072 dims), ivfflat index is not supported in pgvector.
+    // Keep table/indexes simple; for current corpus size this is fast enough.
     await pool.query(`
       CREATE INDEX IF NOT EXISTS ${this.tableName}_lang_idx
       ON ${this.tableName} (lang);
@@ -75,34 +88,34 @@ export class PgVectorStore {
 
   async replaceAll(chunks: RagChunk[]): Promise<void> {
     const pool = this.getPoolOrThrow();
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      await client.query(`TRUNCATE TABLE ${this.tableName}`);
-      for (const chunk of chunks) {
-        await client.query(
-          `
-            INSERT INTO ${this.tableName}
-              (id, content, embedding, law, article, lang, source_path)
-            VALUES ($1, $2, $3::vector, $4, $5, $6, $7)
-          `,
-          [
-            chunk.id,
-            chunk.content,
-            toPgVectorLiteral(chunk.embedding),
-            chunk.law,
-            chunk.article,
-            chunk.lang,
-            chunk.sourcePath,
-          ],
+    await pool.query(`TRUNCATE TABLE ${this.tableName}`);
+
+    const batchSize = 100;
+    for (let i = 0; i < chunks.length; i += batchSize) {
+      const batch = chunks.slice(i, i + batchSize);
+      const values: unknown[] = [];
+      const rowsSql = batch.map((chunk, idx) => {
+        const p = idx * 7;
+        values.push(
+          chunk.id,
+          chunk.content,
+          toPgVectorLiteral(chunk.embedding),
+          chunk.law,
+          chunk.article,
+          chunk.lang,
+          chunk.sourcePath,
         );
-      }
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
+        return `($${p + 1}, $${p + 2}, $${p + 3}::vector, $${p + 4}, $${p + 5}, $${p + 6}, $${p + 7})`;
+      });
+
+      await pool.query(
+        `
+          INSERT INTO ${this.tableName}
+            (id, content, embedding, law, article, lang, source_path)
+          VALUES ${rowsSql.join(",")}
+        `,
+        values,
+      );
     }
   }
 

@@ -4,10 +4,12 @@ import path from "node:path";
 import { requireAuth } from "../middleware/auth.js";
 import { ingestAllDocuments } from "../rag/ingest.js";
 import { PgVectorStore } from "../rag/pgVectorStore.js";
+import { VectorStore } from "../rag/vectorStore.js";
 import { config } from "../config.js";
 
 export const docRoutes = Router();
 const pgVectorStore = new PgVectorStore();
+const localVectorStore = new VectorStore(config.vectorDbPath);
 
 docRoutes.get("/status", requireAuth, async (req, res) => {
   if (req.user?.role !== "official") {
@@ -44,8 +46,12 @@ docRoutes.get("/status", requireAuth, async (req, res) => {
   let manifestFilesCount = 0;
   let firstManifestFile: string | null = null;
   try {
-    await pgVectorStore.ensureSchema();
-    vectorChunks = await pgVectorStore.count();
+    if (config.useLocalVectorDb) {
+      vectorChunks = (await localVectorStore.load()).length;
+    } else {
+      await pgVectorStore.ensureSchema();
+      vectorChunks = await pgVectorStore.count();
+    }
   } catch {
     vectorChunks = 0;
   }
@@ -69,6 +75,7 @@ docRoutes.get("/status", requireAuth, async (req, res) => {
     cwd: process.cwd(),
     docsRoot: config.docsRoot,
     docsRootResolved: resolvedDocsRoot,
+    storageMode: config.useLocalVectorDb ? "local_chunks_json" : "pgvector",
     ruTxtFiles: ruCount,
     kzTxtFiles: kzCount,
     pgVectorTable: config.pgVectorTable,
@@ -166,8 +173,12 @@ docRoutes.get("/status-public", async (_req, res) => {
 
   let vectorChunks = 0;
   try {
-    await pgVectorStore.ensureSchema();
-    vectorChunks = await pgVectorStore.count();
+    if (config.useLocalVectorDb) {
+      vectorChunks = (await localVectorStore.load()).length;
+    } else {
+      await pgVectorStore.ensureSchema();
+      vectorChunks = await pgVectorStore.count();
+    }
   } catch {
     vectorChunks = 0;
   }
@@ -177,6 +188,7 @@ docRoutes.get("/status-public", async (_req, res) => {
     cwd: process.cwd(),
     docsRoot: config.docsRoot,
     docsRootResolved: resolvedDocsRoot,
+    storageMode: config.useLocalVectorDb ? "local_chunks_json" : "pgvector",
     docsRootResolvedExists: docsRootDebug.exists,
     docsRootResolvedError: docsRootDebug.error,
     docsRootEntries,

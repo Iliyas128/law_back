@@ -4,6 +4,26 @@ import type { RagChunk } from "./types.js";
 
 const ai = config.geminiApiKey ? new GoogleGenAI({ apiKey: config.geminiApiKey }) : null;
 
+/**
+ * Базовый конфиг для всех чат-вызовов Gemini 2.5.
+ * Главное здесь — `thinkingBudget`. По умолчанию (0) отключаем «размышления»,
+ * это ускоряет ответ в 2–3 раза без заметной потери качества для коротких юр-ответов.
+ * Через ENV (`GEMINI_THINKING_BUDGET`) можно вернуть 'auto' (-1) или задать конкретный лимит.
+ */
+function chatGenConfig(extra?: { temperature?: number; maxOutputTokens?: number }): {
+  thinkingConfig?: { thinkingBudget: number };
+  temperature?: number;
+  maxOutputTokens?: number;
+} {
+  const cfg: ReturnType<typeof chatGenConfig> = {};
+  if (Number.isFinite(config.geminiThinkingBudget)) {
+    cfg.thinkingConfig = { thinkingBudget: config.geminiThinkingBudget };
+  }
+  if (extra?.temperature !== undefined) cfg.temperature = extra.temperature;
+  if (extra?.maxOutputTokens !== undefined) cfg.maxOutputTokens = extra.maxOutputTokens;
+  return cfg;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -112,6 +132,7 @@ export async function expandSearchQueryForRetrieval(question: string): Promise<s
   try {
     const response = await ai.models.generateContent({
       model: config.geminiChatModel,
+      config: chatGenConfig({ temperature: 0.2, maxOutputTokens: 256 }),
       contents: [
         {
           role: "user",
@@ -195,13 +216,16 @@ export async function rankHybrid(
 
 const UNIFIED_SYSTEM_PROMPT = [
   "Ты юридический AI-ассистент по законодательству Республики Казахстан.",
-  "Пиши простым языком для обычного человека без юридического образования: короткие фразы, без лишней канцелярита. Сначала прямой ответ на вопрос (что будет, какой штраф), затем кратко — права и исключения, если они есть во фрагментах.",
-  "Опирайся только на предоставленные фрагменты норм. Не выдумывай статьи, пункты и формулировки.",
-  "Если вопрос общий («что будет», «какой штраф») про ситуацию в административном производстве, а во фрагментах есть статья КоАП с конкретной санкцией (например штраф в МРП) — назови её в первую очередь; статьи общего характера (про права свидетеля) не подменяют статью о санкции.",
-  "Не смешивай уголовный и административный процесс в одной куче: про УПК говори только если пользователь явно спрашивает про уголовное дело или во фрагментах нет ответа по КоАП, но есть УПК.",
-  "Если во фрагментах есть отсылки к другим статьям — учитывай связь кратко.",
-  "Если данных недостаточно — прямо укажи это.",
-  "В конце ответа перечисли использованные источники: закон и статья.",
+  "Пиши простым языком для обычного человека: короткие фразы, без канцелярита. Сначала прямой ответ (что будет, какой штраф), затем кратко — права и исключения.",
+  "Опирайся ТОЛЬКО на предоставленные фрагменты норм. НЕ выдумывай статьи, номера, размеры штрафов и формулировки.",
+  "Если вопрос требует УК (тяжкий/средний вред здоровью, убийство, кража, грабёж, разбой, наркотики, оружие, половые преступления), а среди фрагментов есть подходящая статья УК — приоритет ей.",
+  "Если вопрос про лёгкое нарушение, штраф в МРП, мелкое хулиганство, опьянение в общественном месте — приоритет КоАП.",
+  "Если в фрагментах нет статьи, прямо отвечающей на вопрос — ЧЕСТНО скажи об этом одним предложением и кратко сориентируй пользователя по виду ответственности (уголовная/административная), не выдумывая конкретных норм. Не натягивай неподходящие статьи (например, ст. о необходимой обороне или задержании в ответ на вопрос о размере наказания за вред здоровью).",
+  "Ориентир по тяжести вреда здоровью: лёгкий вред / побои — часто ст. 108–109 УК или КоАП; средняя тяжесть — ст. 107 УК; тяжкий — ст. 106 УК; убийство — ст. 99 УК. Конкретная тяжесть (особенно переломы челюсти и др.) задаётся законодательным перечнем и судебно-медической экспертизой — упоминай это, если текст фрагментов недостаточно детализирован.",
+  "Если во фрагментах ЕСТЬ статья УК 106, 107, 108 или 109 и пользователь спрашивает про последствия драки/травмы — обязательно перескажи из текста фрагмента правовые последствия (наказание по закону), хотя бы в общих чертах, и укажи, что точная статья зависит от выводов экспертизы.",
+  "Не смешивай УПК с КоАП в одной куче. УПК упоминай только если вопрос явно про уголовный процесс или нет фрагментов КоАП.",
+  "Если фрагменты содержат отсылки к другим статьям — кратко упомяни связь.",
+  "В конце ответа перечисли использованные источники в формате: «Источники: [Закон, ст. N], [Закон, ст. M]».",
 ].join(" ");
 
 function parseJsonObject(raw: string): Record<string, unknown> | null {
@@ -254,6 +278,7 @@ export async function analyzeRetrievedChunks(
 
   const response = await ai.models.generateContent({
     model: config.geminiChatModel,
+    config: chatGenConfig({ temperature: 0.1, maxOutputTokens: 512 }),
     contents: [
       {
         role: "user",
@@ -326,6 +351,154 @@ ${question}
   return { needsClarification: false, selectedIndices: unique };
 }
 
+export interface SelectAndAnswerResult {
+  needsClarification: boolean;
+  clarificationQuestion?: string;
+  /** 1-based индексы выбранных фрагментов (как в исходном массиве). */
+  selectedIndices: number[];
+  /** Готовый ответ пользователю (если needsClarification=false). */
+  answer: string;
+}
+
+/**
+ * Объединённый вызов: модель ОДНОВРЕМЕННО выбирает 1–4 лучших фрагмента и пишет финальный ответ.
+ * Заменяет последовательную пару analyzeRetrievedChunks + generateUnifiedAnswer и экономит ~10–15 секунд.
+ *
+ * Возвращает строгий JSON с ответом и выбранными индексами; при ошибке парсинга мы откатываемся
+ * к старому двухэтапному поведению на верхнем уровне.
+ */
+export async function selectAndGenerateAnswer(
+  question: string,
+  topChunks: RagChunk[],
+): Promise<SelectAndAnswerResult> {
+  const n = topChunks.length;
+  if (n === 0) {
+    return {
+      needsClarification: false,
+      selectedIndices: [],
+      answer: "Не удалось найти подходящие нормы. Попробуйте сформулировать вопрос подробнее.",
+    };
+  }
+
+  if (!ai) {
+    const fallbackIdx = Array.from({ length: Math.min(3, n) }, (_, i) => i + 1);
+    const first = topChunks[0];
+    return {
+      needsClarification: false,
+      selectedIndices: fallbackIdx,
+      answer: [
+        `Основание: ${first.law}, статья: ${first.article}`,
+        "",
+        first.content.slice(0, 1800),
+        "",
+        "Важно: это предварительный ответ без LLM. Для оценки обратитесь к юристу.",
+      ].join("\n"),
+    };
+  }
+
+  // Сократим контекст до promptTopK и обрежем длинные тексты — это ускоряет генерацию.
+  const limited = topChunks.slice(0, Math.max(1, config.promptTopK));
+  const trim = (s: string): string =>
+    s.length > config.promptChunkChars ? `${s.slice(0, config.promptChunkChars)}…` : s;
+  const labeled = limited
+    .map(
+      (c, i) =>
+        `[${i + 1}] Закон: ${c.law}; Статья/фрагмент: ${c.article}; Язык: ${c.lang}\nТекст:\n${trim(c.content)}`,
+    )
+    .join("\n\n---\n\n");
+  const limitedN = limited.length;
+
+  const response = await ai.models.generateContent({
+    model: config.geminiChatModel,
+    config: chatGenConfig({ temperature: 0.2, maxOutputTokens: 1024 }),
+    contents: [
+      {
+        role: "user",
+        parts: [
+          {
+            text: `${UNIFIED_SYSTEM_PROMPT}
+
+Вопрос пользователя:
+${question}
+
+Ниже ровно ${limitedN} фрагментов законов [1]…[${limitedN}].
+
+Сделай ДВЕ вещи за один проход:
+1) Выбери от 1 до 4 наиболее релевантных фрагментов (числа от 1 до ${limitedN}).
+2) Сразу сформируй итоговый ответ пользователю на русском языке, опираясь ТОЛЬКО на выбранные фрагменты.
+
+Верни СТРОГО один JSON-объект без пояснений и без markdown-обёртки:
+{
+  "needs_clarification": boolean,
+  "clarification_question": string | null,
+  "selected_indices": number[],
+  "answer": string
+}
+
+Правила:
+- needs_clarification: true ТОЛЬКО если вопрос совершенно бессодержательный («штраф?» одно слово). Разговорная формулировка — НЕ повод уточнять.
+- Если needs_clarification=true → selected_indices=[], answer = короткий вопрос-уточнение для пользователя.
+- selected_indices: порядок важен. Первый — ГЛАВНЫЙ фрагмент (статья с санкцией / прямым ответом). Не дополняй список слабо релевантными статьями ради количества.
+- Для вопросов про «что мне будет / какой штраф / какое наказание»:
+   • если речь про физический вред человеку, драку с травмой, убийство — приоритет статьям УК (например 99/106/107/108/109/293), если они есть среди фрагментов;
+   • если речь про лёгкое нарушение, мелкое хулиганство, опьянение в общественном месте — приоритет статьям КоАП (например 434, 440, 73-1).
+- Если в вопросе явно упомянут конкретный закон/статья — приоритет фрагментам именно из этого закона/статьи.
+- НЕ натягивай неподходящие статьи. Если среди фрагментов НЕТ статьи о санкции для описанной ситуации — в answer ЧЕСТНО скажи: «среди доступных норм нет статьи, прямо устанавливающей наказание за это», и кратко сориентируй пользователя по виду ответственности (уголовная/административная), без выдумки конкретных норм.
+- НЕ смешивай УПК с КоАП. УПК упоминай только если вопрос явно про уголовный процесс или нет фрагментов КоАП.
+- answer: 1–3 коротких абзаца простым языком. Сначала прямой ответ (что будет, какой штраф/срок), затем 1–2 строки про права/исключения, если они есть во фрагментах.
+- В конце answer строка: «Источники: [Закон, ст. N], [Закон, ст. M]».
+
+Фрагменты:
+${labeled}`,
+          },
+        ],
+      },
+    ],
+  });
+
+  const raw = response.text?.trim() ?? "";
+  const parsed = parseJsonObject(raw);
+  if (!parsed) {
+    return {
+      needsClarification: false,
+      selectedIndices: Array.from({ length: Math.min(3, limitedN) }, (_, i) => i + 1),
+      answer: raw || "Не удалось сгенерировать ответ.",
+    };
+  }
+
+  const needs = Boolean(parsed.needs_clarification);
+  const cq =
+    typeof parsed.clarification_question === "string"
+      ? parsed.clarification_question.trim()
+      : "";
+  const idxRaw = parsed.selected_indices;
+  const oneBased = Array.isArray(idxRaw)
+    ? idxRaw
+        .map((x) => (typeof x === "number" ? x : parseInt(String(x), 10)))
+        .filter((x) => !Number.isNaN(x) && x >= 1 && x <= limitedN)
+    : [];
+  const answer = typeof parsed.answer === "string" ? parsed.answer.trim() : "";
+
+  if (needs) {
+    return {
+      needsClarification: true,
+      clarificationQuestion:
+        cq || "Уточните, пожалуйста, ситуацию: о каком законе и обстоятельствах речь?",
+      selectedIndices: [],
+      answer: cq || "Уточните, пожалуйста, ситуацию: о каком законе и обстоятельствах речь?",
+    };
+  }
+
+  return {
+    needsClarification: false,
+    selectedIndices:
+      Array.from(new Set(oneBased)).slice(0, 4).length > 0
+        ? Array.from(new Set(oneBased)).slice(0, 4)
+        : Array.from({ length: Math.min(3, limitedN) }, (_, i) => i + 1),
+    answer: answer || "Не удалось сгенерировать ответ.",
+  };
+}
+
 export async function generateUnifiedAnswer(question: string, contexts: RagChunk[]): Promise<string> {
   if (!ai) {
     const first = contexts[0];
@@ -356,6 +529,7 @@ export async function generateUnifiedAnswer(question: string, contexts: RagChunk
 
   const response = await ai.models.generateContent({
     model: config.geminiChatModel,
+    config: chatGenConfig({ temperature: 0.2, maxOutputTokens: 1024 }),
     contents: [
       {
         role: "user",

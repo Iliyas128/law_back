@@ -133,14 +133,66 @@ export class PgVectorStore {
       [options.lang ?? null, vec, options.limit],
     );
 
-    return result.rows.map((row) => ({
-      id: row.id,
-      content: row.content,
-      embedding: [],
-      law: row.law,
-      article: row.article,
-      lang: row.lang,
-      sourcePath: row.source_path,
-    }));
+    return result.rows.map(this.rowToChunk);
   }
+
+  /**
+   * Точечная выборка по номеру статьи (опционально с фильтром по закону).
+   * Используется, когда NER извлёк номер статьи: мы можем «подсадить» эту статью в контекст
+   * без зависимости от косинусного расстояния.
+   */
+  async fetchByArticle(
+    article: string,
+    options: { lang?: Language; lawLike?: string; limit?: number },
+  ): Promise<RagChunk[]> {
+    const pool = this.getPoolOrThrow();
+    const limit = options.limit ?? 4;
+    const result = await pool.query<ChunkRow>(
+      `
+        SELECT id, content, law, article, lang, source_path
+        FROM ${this.tableName}
+        WHERE ($1::text IS NULL OR lang = $1)
+          AND (
+            article = $2
+            OR article ILIKE 'статья ' || $2 || '%'
+            OR article ILIKE $2 || '.%'
+            OR article ~* ('(^|\\D)' || $2 || '(\\D|$)')
+          )
+          AND ($3::text IS NULL OR law ILIKE $3)
+        LIMIT $4
+      `,
+      [options.lang ?? null, article, options.lawLike ?? null, limit],
+    );
+    return result.rows.map(this.rowToChunk);
+  }
+
+  /** Top-K чанков, относящихся к заданному «семейству» закона (поиск по подстроке в law). */
+  async fetchByLawLike(
+    lawLike: string,
+    options: { lang?: Language; limit?: number },
+  ): Promise<RagChunk[]> {
+    const pool = this.getPoolOrThrow();
+    const limit = options.limit ?? 8;
+    const result = await pool.query<ChunkRow>(
+      `
+        SELECT id, content, law, article, lang, source_path
+        FROM ${this.tableName}
+        WHERE ($1::text IS NULL OR lang = $1)
+          AND law ILIKE $2
+        LIMIT $3
+      `,
+      [options.lang ?? null, lawLike, limit],
+    );
+    return result.rows.map(this.rowToChunk);
+  }
+
+  private rowToChunk = (row: ChunkRow): RagChunk => ({
+    id: row.id,
+    content: row.content,
+    embedding: [],
+    law: row.law,
+    article: row.article,
+    lang: row.lang,
+    sourcePath: row.source_path,
+  });
 }

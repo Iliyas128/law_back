@@ -24,6 +24,18 @@ export const config = {
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
   geminiChatModel: process.env.GEMINI_CHAT_MODEL ?? "gemini-2.5-flash",
   geminiEmbeddingModel: process.env.GEMINI_EMBED_MODEL ?? "gemini-embedding-001",
+  /**
+   * Бюджет «размышлений» Gemini 2.5 (thinking tokens).
+   *  - 0  → отключить thinking (вдвое быстрее, без заметной потери качества для коротких юр-ответов).
+   *  - -1 → авто (модель сама выбирает бюджет, по умолчанию у API).
+   *  - N (>0) → ограничить N токенов на размышления.
+   * По умолчанию у нас 0 — главный буст по скорости.
+   */
+  geminiThinkingBudget: Number(process.env.GEMINI_THINKING_BUDGET ?? 0),
+  /** Максимум фрагментов, которые попадают в LLM-промпт select+generate. */
+  promptTopK: Number(process.env.RAG_PROMPT_TOP_K ?? 8),
+  /** Максимум символов на каждый фрагмент в промпте select+generate (отбор). */
+  promptChunkChars: Number(process.env.RAG_PROMPT_CHUNK_CHARS ?? 1100),
   docsRoot:
     process.env.DOCS_ROOT ??
     (process.env.NODE_ENV === "production"
@@ -48,10 +60,28 @@ export const config = {
   hybridVectorWeight: Number(process.env.RAG_VECTOR_WEIGHT ?? 0.7),
   hybridLexicalWeight: Number(process.env.RAG_LEXICAL_WEIGHT ?? 0.3),
   hybridCandidateMultiplier: Number(process.env.RAG_CANDIDATE_MULTIPLIER ?? 6),
-  /** Дополнять запрос коротким LLM-списком терминов для поиска (отключить: RAG_LLM_QUERY_EXPAND=0). */
-  ragLlmQueryExpand: process.env.RAG_LLM_QUERY_EXPAND !== "0",
-  embedRetries: Number(process.env.RAG_EMBED_RETRIES ?? 5),
-  embedRetryBaseMs: Number(process.env.RAG_EMBED_RETRY_BASE_MS ?? 800),
+  /**
+   * Дополнять запрос коротким LLM-списком терминов для поиска.
+   * По умолчанию выключено: на текущей архитектуре есть быстрый regex-NER + multi-query retrieval,
+   * а лишний LLM-вызов добавлял к ответу 5–10 секунд. Включить: RAG_LLM_QUERY_EXPAND=1.
+   */
+  ragLlmQueryExpand: process.env.RAG_LLM_QUERY_EXPAND === "1",
+  embedRetries: Number(process.env.RAG_EMBED_RETRIES ?? 3),
+  embedRetryBaseMs: Number(process.env.RAG_EMBED_RETRY_BASE_MS ?? 400),
+  /**
+   * Нейросетевой NER (Transformers.js, ONNX). В dev включён по умолчанию; на production (Vercel)
+   * отключён — первый прогрев качает модель и тяжёлый для serverless.
+   * Включить на проде: USE_TRANSFORMER_NER=1
+   * Выключить локально: USE_TRANSFORMER_NER=0
+   */
+  useTransformerNer:
+    process.env.USE_TRANSFORMER_NER === "1" ||
+    (process.env.NODE_ENV !== "production" && process.env.USE_TRANSFORMER_NER !== "0"),
+  /** Модель из Hugging Face / Xenova (ONNX), совместимая с @xenova/transformers */
+  transformerNerModel:
+    process.env.TRANSFORMER_NER_MODEL ?? "Xenova/bert-base-multilingual-cased-ner-hrl",
+  /** Минимальная уверенность span при агрегации simple */
+  transformerNerMinScore: Number(process.env.TRANSFORMER_NER_MIN_SCORE ?? 0.72),
   corsOrigins: parseOrigins(
     process.env.CORS_ORIGINS ?? "http://localhost:8080,http://localhost:5173,https://law-front1.vercel.app",
   ),

@@ -10,6 +10,25 @@ function parseOrigins(raw: string): string[] {
     .filter(Boolean);
 }
 
+/** Всегда в whitelist, даже если CORS_ORIGINS в Vercel задан без snowtech. */
+export const REQUIRED_CORS_ORIGINS = [
+  "https://www.snowtech.asia",
+  "https://snowtech.asia",
+] as const;
+
+const DEFAULT_CORS_ORIGINS = [
+  "http://localhost:8080",
+  "http://localhost:5173",
+  "https://law-front1.vercel.app",
+  ...REQUIRED_CORS_ORIGINS,
+];
+
+function buildCorsOrigins(): string[] {
+  const fromEnv = process.env.CORS_ORIGINS?.trim();
+  const base = fromEnv ? parseOrigins(fromEnv) : [...DEFAULT_CORS_ORIGINS];
+  return [...new Set([...base, ...REQUIRED_CORS_ORIGINS])];
+}
+
 /** Имя таблицы только [a-zA-Z0-9_], иначе SQL-инъекция через env. */
 function sanitizePgTableName(raw: string, fallback: string): string {
   const s = raw.trim();
@@ -82,9 +101,7 @@ export const config = {
     process.env.TRANSFORMER_NER_MODEL ?? "Xenova/bert-base-multilingual-cased-ner-hrl",
   /** Минимальная уверенность span при агрегации simple */
   transformerNerMinScore: Number(process.env.TRANSFORMER_NER_MIN_SCORE ?? 0.72),
-  corsOrigins: parseOrigins(
-    process.env.CORS_ORIGINS ?? "http://localhost:8080,http://localhost:5173,https://law-front1.vercel.app",
-  ),
+  corsOrigins: buildCorsOrigins(),
   /**
    * База для fallback загрузки .txt с GitHub Raw (без trailing slash).
    * DOCS_RAW_BASE= пусто или "0" — не тянуть с GitHub (только локальные файлы / PG).

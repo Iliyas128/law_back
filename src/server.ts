@@ -1,42 +1,28 @@
 import express from "express";
 import cors from "cors";
 import { config } from "./config.js";
+import { corsMiddleware } from "./cors.js";
 import { authRoutes } from "./routes/authRoutes.js";
 import { chatRoutes } from "./routes/chatRoutes.js";
 import { docRoutes } from "./routes/docRoutes.js";
 
 const app = express();
 
-// Жесткий preflight-обработчик: некоторые прокси/рендеры на Vercel возвращают 404/без CORS
-// на OPTIONS, поэтому браузер ломается. Здесь мы всегда отвечаем корректными CORS-заголовками.
-app.use((req, res, next) => {
-  if (req.method === "OPTIONS") {
-    const origin = req.headers.origin;
-    res.setHeader("Access-Control-Allow-Origin", origin ?? "*");
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-    res.status(204).end();
-    return;
-  }
-  next();
-});
+app.use(corsMiddleware);
 
 app.use(
   cors({
-    // Vercel + браузерные preflight иногда ломают кастомную whitelist-логику.
-    // Чтобы точно заработало для деплоя, разрешаем запросы с любого Origin,
-    // а заголовки CORS будут присутствовать в ответе.
-    origin: true,
+    origin: config.corsOrigins,
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "Accept", "X-Requested-With"],
   }),
 );
+
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, service: "law_back" });
+  res.json({ ok: true, service: "law_back", corsOrigins: config.corsOrigins });
 });
 
 app.use("/api/auth", authRoutes);
@@ -54,9 +40,9 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 export default app;
 export { app };
 
-/** Vercel serverless: один инстанс без listen; локально и Docker — обычный HTTP-сервер. */
-if (process.env.VERCEL !== "1") {
+if (!process.env.VERCEL) {
   app.listen(config.port, () => {
     console.log(`law_back is running on http://localhost:${config.port}`);
+    console.log(`CORS origins: ${config.corsOrigins.join(", ")}`);
   });
 }

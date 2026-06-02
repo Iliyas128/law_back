@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "ingest": "tsx scripts/run-ingest.ts",
     "db:check": "tsx scripts/pg-check.ts",
-    "import:chunks": "tsx scripts/import-chunks-json-to-pg.ts"
+    "import:chunks": "tsx scripts/import-chunks-json-to-pg.ts",
+    "cors:check": "node scripts/cors-check.mjs"
   },
   "keywords": [],
   "author": "",

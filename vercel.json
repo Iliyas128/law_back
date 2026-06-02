@@ -11,8 +11,36 @@
   ],
   "headers": [
     {
-      "source": "/api/(.*)",
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "header",
+          "key": "Origin",
+          "value": "https://www.snowtech.asia"
+        }
+      ],
       "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "https://www.snowtech.asia" },
+        { "key": "Access-Control-Allow-Credentials", "value": "true" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, PUT, DELETE, OPTIONS" },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type, Authorization, Accept, X-Requested-With"
+        },
+        { "key": "Vary", "value": "Origin" }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "header",
+          "key": "Origin",
+          "value": "https://snowtech.asia"
+        }
+      ],
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "https://snowtech.asia" },
         { "key": "Access-Control-Allow-Credentials", "value": "true" },
         { "key": "Access-Control-Allow-Methods", "value": "GET, POST, PUT, DELETE, OPTIONS" },
         {
@@ -24,7 +52,7 @@
     }
   ],
   "functions": {
-    "api/**/*.mjs": {
+    "api/index.mjs": {
       "maxDuration": 60
     }
   }

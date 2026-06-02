@@ -1,4 +1,14 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "version": 2,
+  "buildCommand": "npm run build",
+  "installCommand": "npm install",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api"
+    }
+  ],
   "headers": [
     {
       "source": "/api/(.*)",
@@ -12,5 +22,10 @@
         { "key": "Vary", "value": "Origin" }
       ]
     }
-  ]
+  ],
+  "functions": {
+    "api/**/*.mjs": {
+      "maxDuration": 60
+    }
+  }
 }

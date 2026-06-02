@@ -1,23 +1,34 @@
 /**
- * Vercel Serverless: CORS и OPTIONS до import("../dist/server.js"),
- * иначе при падении/долгом cold start preflight без Access-Control-Allow-Origin.
+ * Vercel entry: CORS + OPTIONS до загрузки Express (cold start / 404 без заголовков).
  */
+import { createServer } from "@vercel/node";
 
-const ALLOWED_ORIGINS = new Set([
+const REQUIRED_ORIGINS = [
   "https://www.snowtech.asia",
   "https://snowtech.asia",
+];
+
+const FALLBACK_ORIGINS = [
   "http://localhost:8080",
   "http://localhost:5173",
   "https://law-front1.vercel.app",
-]);
+];
 
 function normalizeOrigin(origin) {
   return origin.trim().replace(/\/+$/, "");
 }
 
+function buildAllowedOrigins() {
+  const fromEnv = (process.env.CORS_ORIGINS ?? "")
+    .split(",")
+    .map((o) => normalizeOrigin(o))
+    .filter(Boolean);
+  return new Set([...REQUIRED_ORIGINS, ...FALLBACK_ORIGINS, ...fromEnv]);
+}
+
 function isAllowedOrigin(origin) {
   if (!origin || typeof origin !== "string") return false;
-  return ALLOWED_ORIGINS.has(normalizeOrigin(origin));
+  return buildAllowedOrigins().has(normalizeOrigin(origin));
 }
 
 function setCorsHeaders(res, origin) {
@@ -32,13 +43,16 @@ function setCorsHeaders(res, origin) {
   res.setHeader("Vary", "Origin");
 }
 
-let appPromise = null;
+let serverPromise = null;
 
-function loadApp() {
-  if (!appPromise) {
-    appPromise = import("../dist/server.js").then((m) => m.default ?? m.app);
+async function getServer() {
+  if (!serverPromise) {
+    serverPromise = import("../dist/server.js").then((m) => {
+      const app = m.default ?? m.app;
+      return createServer(app);
+    });
   }
-  return appPromise;
+  return serverPromise;
 }
 
 export async function vercelHandler(req, res) {
@@ -55,13 +69,8 @@ export async function vercelHandler(req, res) {
   }
 
   try {
-    const app = await loadApp();
-    await new Promise((resolve, reject) => {
-      app(req, res, (err) => {
-        if (err) reject(err);
-        else resolve(undefined);
-      });
-    });
+    const server = await getServer();
+    return server(req, res);
   } catch (err) {
     console.error("[api/handler]", err);
     if (!res.headersSent) {

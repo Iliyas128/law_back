@@ -22,7 +22,22 @@ app.use(
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, service: "law_back", corsOrigins: config.corsOrigins });
+  res.json({
+    ok: true,
+    service: "law_back",
+    corsOrigins: config.corsOrigins,
+    vercel: Boolean(process.env.VERCEL),
+  });
+});
+
+app.get("/api/cors-check", (req, res) => {
+  const origin = req.headers.origin;
+  res.json({
+    requestOrigin: origin ?? null,
+    allowed: config.corsOrigins,
+    allowedForThisRequest:
+      typeof origin === "string" && config.corsOrigins.includes(origin.replace(/\/+$/, "")),
+  });
 });
 
 app.use("/api/auth", authRoutes);

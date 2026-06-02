@@ -132,10 +132,44 @@ Body:
 
 На serverless (Vercel) к этому добавляется cold start (~1–3 с) и прогрев пула Postgres.
 
+## Деплой на Vercel и CORS
+
+Фронт на `https://www.snowtech.asia` ходит на backend по `VITE_API_BASE_URL` (по умолчанию `https://law-back1.vercel.app/api`).
+
+### Если в браузере «blocked by CORS» / `No Access-Control-Allow-Origin`
+
+1. **Проверьте, что backend вообще жив.** В терминале:
+   ```bash
+   curl -i https://ВАШ-BACKEND.vercel.app/api/health
+   ```
+   Должен быть `200` и JSON `{ "ok": true }`.  
+   Если видите `DEPLOYMENT_NOT_FOUND` или `404` — это **не CORS**, а **нет деплоя**. Нужен Redeploy проекта `law_back` на Vercel.
+
+2. **Environment Variables** (проект backend на Vercel):
+   ```env
+   CORS_ORIGINS=http://localhost:5173,https://www.snowtech.asia,https://snowtech.asia,https://law-front1.vercel.app
+   ```
+   `https://www.snowtech.asia/lawAi/chat` — **неверно** (путь не входит в Origin). Нужен только `https://www.snowtech.asia`.
+
+3. **Root Directory** в настройках Vercel: корень репозитория `law_back` (не монорепо без пути).
+
+4. После push — **Redeploy**. Проверка CORS:
+   ```bash
+   curl -i -X OPTIONS "https://ВАШ-BACKEND.vercel.app/api/chat" \
+     -H "Origin: https://www.snowtech.asia" \
+     -H "Access-Control-Request-Method: POST" \
+     -H "Access-Control-Request-Headers: content-type"
+   ```
+   В ответе обязательно: `Access-Control-Allow-Origin: https://www.snowtech.asia`.
+
+5. **Фронт на snowtech**: при сборке задайте `VITE_API_BASE_URL=https://ВАШ-РАБОЧИЙ-BACKEND.vercel.app/api`.
+
+`snowtech.asia` и `www.snowtech.asia` всегда разрешены в `api/handler.mjs`, даже если забыли добавить в env.
+
 ## Интеграция с law_front
 
-Сейчас фронт использует `mockApi`. Чтобы перейти на backend:
+Фронт вызывает `POST /api/chat` через `law_front1/src/lib/mockApi.ts`.
 
-1. В `law_front/src/lib/mockApi.ts` заменить вызов на fetch к `POST /api/chat`
-2. Передавать JWT из login
-3. Использовать уже готовые поля ответа `answer`, `law`, `article`
+1. `VITE_API_BASE_URL` — URL backend с суффиксом `/api`
+2. При необходимости — JWT из login
+3. Поля ответа: `answer`, `law`, `article`, `sources`
